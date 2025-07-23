@@ -1,0 +1,1045 @@
+import requests
+from bs4 import BeautifulSoup
+import os
+import re
+import time
+import random
+import json
+import platform
+from datetime import datetime
+from tkinter import *
+from tkinter import ttk, messagebox, filedialog
+from threading import Thread
+from urllib.parse import urljoin, urlparse
+import cloudscraper
+from tkinter import scrolledtext
+import tkinter as tk  # 添加缺失的tk模块
+
+
+class NovelScraperPro:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("小说下载专家 v2.1")
+        self.root.geometry("820x680")  # 更紧凑的尺寸
+        self.root.configure(bg="#f0f5ff")  # 清爽的淡蓝色背景
+
+        # 确保中文显示正常
+        self.font_family = "微软雅黑" if platform.system() == "Windows" else "PingFang SC"
+
+        # 配置文件路径
+        self.config_file = os.path.join(os.path.expanduser("~"), ".novel_scraper_config.json")
+        self.config = self._load_config()
+
+        # 初始化Cloudflare绕过工具
+        self.scraper = cloudscraper.create_scraper()
+
+        # 创建主界面
+        self.create_ui()
+
+        # 日志初始化
+        self.log("小说下载专家已启动")
+
+        # 加载历史记录
+        self._load_history()
+
+    def _load_config(self):
+        """加载配置文件"""
+        try:
+            if os.path.exists(self.config_file):
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            return {
+                "history": [],
+                "last_save_path": os.path.join(os.path.expanduser("~"), "小说.txt"),
+                "last_url": "https://npford.com/news/91161.html"
+            }
+        except:
+            return {
+                "history": [],
+                "last_save_path": os.path.join(os.path.expanduser("~"), "小说.txt"),
+                "last_url": "https://npford.com/news/91161.html"
+            }
+
+    def _save_config(self):
+        """保存配置文件"""
+        try:
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(self.config, f, ensure_ascii=False, indent=2)
+        except:
+            pass
+
+    def _load_history(self):
+        """加载历史记录"""
+        if "history" in self.config:
+            for item in self.config["history"]:
+                if hasattr(self, 'history_tree'):
+                    self.history_tree.insert("", "end", values=(item.split(" | ")[0],
+                                                                item.split(" | ")[1] if len(
+                                                                    item.split(" | ")) > 1 else "",
+                                                                item.split(" | ")[2] if len(
+                                                                    item.split(" | ")) > 2 else ""))
+
+    def _save_history(self, url, filename):
+        """保存历史记录"""
+        history_item = f"{datetime.now().strftime('%Y-%m-%d')} | {url} | {os.path.basename(filename)}"
+
+        # 添加到历史记录
+        if hasattr(self, 'history_tree'):
+            self.history_tree.insert("", "end", values=(
+                datetime.now().strftime('%Y-%m-%d'),
+                url,
+                os.path.basename(filename)
+            ))
+
+        # 保存到配置
+        if "history" not in self.config:
+            self.config["history"] = []
+
+        # 限制历史记录数量
+        self.config["history"].insert(0, history_item)
+        if len(self.config["history"]) > 20:
+            self.config["history"] = self.config["history"][:20]
+
+        self._save_config()
+
+    def create_ui(self):
+        """创建清爽的用户界面"""
+        # 设置样式
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure(".", background="#f0f5ff")
+        style.configure("TFrame", background="#f0f5ff")
+        style.configure("TLabel", background="#f0f5ff", foreground="#333", font=(self.font_family, 9))
+        style.configure("TButton", font=(self.font_family, 9), padding=5)
+        style.configure("Accent.TButton", background="#4a7abc", foreground="white")
+        style.configure("TEntry", fieldbackground="white")
+        style.configure("TCombobox", fieldbackground="white")
+        style.configure("TLabelframe", background="#f0f5ff", relief="flat")
+        style.configure("TLabelframe.Label", background="#f0f5ff", foreground="#2c5e9e",
+                        font=(self.font_family, 10, "bold"))
+        style.configure("Treeview", background="white", fieldbackground="white")
+
+        # 主框架
+        main_frame = ttk.Frame(self.root)
+        main_frame.pack(fill=BOTH, expand=True, padx=15, pady=10)
+
+        # 标题区域
+        header_frame = ttk.Frame(main_frame)
+        header_frame.pack(fill=X, pady=(0, 10))
+
+        title_label = tk.Label(header_frame, text="小说下载专家",
+                               font=(self.font_family, 16, "bold"),
+                               fg="#2c5e9e", bg="#f0f5ff")
+        title_label.pack(side=LEFT)
+
+        version_label = tk.Label(header_frame, text="v2.1",
+                                 font=(self.font_family, 9),
+                                 fg="#777", bg="#f0f5ff")
+        version_label.pack(side=LEFT, padx=10, pady=5)
+
+        # 功能按钮
+        btn_frame = ttk.Frame(header_frame)
+        btn_frame.pack(side=RIGHT, padx=5)
+
+        ttk.Button(btn_frame, text="帮助", width=6, command=self.show_help).pack(side=LEFT, padx=3)
+        ttk.Button(btn_frame, text="网站", width=6, command=self.show_website_menu).pack(side=LEFT, padx=3)
+        ttk.Button(btn_frame, text="历史", width=6, command=self.show_history_menu).pack(side=LEFT, padx=3)
+
+        # 内容区域 (使用Notebook选项卡)
+        notebook = ttk.Notebook(main_frame)
+        notebook.pack(fill=BOTH, expand=True, pady=5)
+
+        # 下载选项卡
+        download_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(download_frame, text="下载设置")
+
+        # URL输入区
+        url_frame = ttk.LabelFrame(download_frame, text="小说地址")
+        url_frame.pack(fill=X, pady=5)
+
+        ttk.Label(url_frame, text="起始URL:").grid(row=0, column=0, padx=5, pady=3, sticky=W)
+        self.url_entry = ttk.Entry(url_frame, width=60)
+        self.url_entry.grid(row=0, column=1, padx=5, pady=3, sticky=EW)
+        self.url_entry.insert(0, self.config.get("last_url", "https://npford.com/news/91161.html"))
+
+        # 文件保存区
+        file_frame = ttk.Frame(url_frame)
+        file_frame.grid(row=1, column=0, columnspan=2, sticky=EW, pady=3)
+
+        ttk.Label(file_frame, text="保存路径:").pack(side=LEFT, padx=5)
+        self.file_entry = ttk.Entry(file_frame, width=45)
+        self.file_entry.pack(side=LEFT, padx=5, fill=X, expand=True)
+        self.file_entry.insert(0, self.config.get("last_save_path", os.path.join(os.path.expanduser("~"), "小说.txt")))
+
+        self.browse_btn = ttk.Button(file_frame, text="浏览", command=self.browse_file, width=6)
+        self.browse_btn.pack(side=LEFT, padx=5)
+
+        # 下载设置
+        settings_frame = ttk.LabelFrame(download_frame, text="下载选项")
+        settings_frame.pack(fill=X, pady=5)
+
+        # 第一行设置
+        row1 = ttk.Frame(settings_frame)
+        row1.pack(fill=X, pady=3)
+
+        ttk.Label(row1, text="反爬级别:").pack(side=LEFT, padx=5)
+        self.anti_level = ttk.Combobox(row1, values=["基础", "标准", "高级", "极限"], width=8)
+        self.anti_level.current(1)
+        self.anti_level.pack(side=LEFT, padx=5)
+
+        ttk.Label(row1, text="请求延迟:").pack(side=LEFT, padx=(15, 5))
+        self.delay_var = StringVar(value="1.5")
+        ttk.Entry(row1, textvariable=self.delay_var, width=5).pack(side=LEFT)
+        ttk.Label(row1, text="秒").pack(side=LEFT, padx=2)
+
+        ttk.Label(row1, text="最大章节:").pack(side=LEFT, padx=(15, 5))
+        self.max_chapters = StringVar(value="50")
+        ttk.Entry(row1, textvariable=self.max_chapters, width=5).pack(side=LEFT)
+
+        # 第二行设置
+        row2 = ttk.Frame(settings_frame)
+        row2.pack(fill=X, pady=3)
+
+        self.auto_open_var = BooleanVar(value=True)
+        ttk.Checkbutton(row2, text="下载后自动打开", variable=self.auto_open_var).pack(side=LEFT, padx=5)
+
+        self.overwrite_var = BooleanVar(value=False)
+        ttk.Checkbutton(row2, text="覆盖已存在文件", variable=self.overwrite_var).pack(side=LEFT, padx=5)
+
+        # 控制按钮
+        ctrl_frame = ttk.Frame(download_frame)
+        ctrl_frame.pack(fill=X, pady=10)
+
+        self.start_btn = ttk.Button(ctrl_frame, text="开始下载", command=self.start_download,
+                                    width=12, style="Accent.TButton")
+        self.start_btn.pack(side=LEFT, padx=5)
+
+        self.stop_btn = ttk.Button(ctrl_frame, text="停止下载", command=self.stop_download,
+                                   state=DISABLED, width=12)
+        self.stop_btn.pack(side=LEFT, padx=5)
+
+        self.test_btn = ttk.Button(ctrl_frame, text="测试连接", command=self.test_connection, width=12)
+        self.test_btn.pack(side=LEFT, padx=5)
+
+        self.clear_btn = ttk.Button(ctrl_frame, text="清空日志", command=self.clear_log, width=12)
+        self.clear_btn.pack(side=LEFT, padx=5)
+
+        # 进度条
+        self.progress_var = DoubleVar()
+        self.progress = ttk.Progressbar(download_frame, variable=self.progress_var,
+                                        style="Horizontal.TProgressbar", length=780)
+        self.progress.pack(fill=X, pady=5)
+
+        self.progress_label = ttk.Label(download_frame, text="准备就绪", foreground="#2c5e9e")
+        self.progress_label.pack()
+
+        # 日志区
+        log_frame = ttk.LabelFrame(download_frame, text="操作日志")
+        log_frame.pack(fill=BOTH, expand=True, pady=5)
+
+        self.log_text = scrolledtext.ScrolledText(log_frame, wrap=WORD, height=8,
+                                                  font=(self.font_family, 9),
+                                                  bg="white", fg="#333")
+        self.log_text.pack(fill=BOTH, expand=True, padx=5, pady=5)
+
+        # 历史记录选项卡
+        history_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(history_frame, text="下载历史")
+
+        # 历史记录列表
+        history_list_frame = ttk.Frame(history_frame)
+        history_list_frame.pack(fill=BOTH, expand=True, pady=5)
+
+        columns = ("time", "url", "file")
+        self.history_tree = ttk.Treeview(history_list_frame, columns=columns, show="headings", height=12)
+
+        # 设置列
+        self.history_tree.heading("time", text="时间")
+        self.history_tree.heading("url", text="URL")
+        self.history_tree.heading("file", text="保存文件")
+
+        self.history_tree.column("time", width=100, anchor=W)
+        self.history_tree.column("url", width=300, anchor=W)
+        self.history_tree.column("file", width=200, anchor=W)
+
+        # 添加滚动条
+        scrollbar = ttk.Scrollbar(history_list_frame, orient=VERTICAL, command=self.history_tree.yview)
+        self.history_tree.configure(yscroll=scrollbar.set)
+        scrollbar.pack(side=RIGHT, fill=Y)
+        self.history_tree.pack(side=LEFT, fill=BOTH, expand=True)
+
+        # 加载历史数据
+        self._load_history()
+
+        # 历史记录控制按钮
+        history_ctrl_frame = ttk.Frame(history_frame)
+        history_ctrl_frame.pack(fill=X, pady=5)
+
+        ttk.Button(history_ctrl_frame, text="加载选中", command=self.load_selected_history).pack(side=LEFT, padx=5)
+        ttk.Button(history_ctrl_frame, text="清空历史", command=self.clear_history).pack(side=LEFT, padx=5)
+
+        # 状态栏
+        self.status_var = StringVar(value="就绪 | 输入URL后点击'开始下载'")
+        status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=SUNKEN, anchor=W,
+                               background="#e0eaf7", foreground="#2c5e9e")
+        status_bar.pack(side=BOTTOM, fill=X)
+
+        # 控制变量
+        self.is_downloading = False
+        self.stop_requested = False
+        self.current_site = ""
+
+        # 双击历史记录加载
+        self.history_tree.bind("<Double-1>", self.load_selected_history)
+
+    def show_website_menu(self):
+        """显示常用网站菜单"""
+        menu = tk.Menu(self.root, tearoff=0)
+        websites = [
+            ("女王小说网", "https://npford.com/"),
+            ("顶点小说", "https://www.23us.so/"),
+            ("笔趣阁", "https://www.biquge.com.cn/"),
+            ("晋江文学城", "https://www.jjwxc.net/"),
+            ("起点中文网", "https://www.qidian.com/"),
+            ("纵横中文网", "https://www.zongheng.com/"),
+            ("17K小说网", "https://www.17k.com/")
+        ]
+
+        for name, url in websites:
+            menu.add_command(label=name, command=lambda u=url: self.url_entry.insert(END, u))
+
+        menu.tk_popup(self.root.winfo_pointerx(), self.root.winfo_pointery())
+
+    def show_history_menu(self):
+        """显示历史记录菜单"""
+        menu = tk.Menu(self.root, tearoff=0)
+
+        if not self.config.get("history", []):
+            menu.add_command(label="暂无历史记录", state=DISABLED)
+        else:
+            for item in self.config["history"]:
+                parts = item.split(" | ")
+                if len(parts) >= 2:
+                    url = parts[1]
+                    display_text = f"{parts[0]} | {url[:20]}..." if len(url) > 20 else item
+                    menu.add_command(label=display_text,
+                                     command=lambda u=url: self.url_entry.delete(0, END) or self.url_entry.insert(0, u))
+
+        menu.tk_popup(self.root.winfo_pointerx(), self.root.winfo_pointery())
+
+    def load_selected_history(self, event=None):
+        """从历史记录加载选中项"""
+        selection = self.history_tree.selection()
+        if selection:
+            item = self.history_tree.item(selection[0], "values")
+            if len(item) >= 2:
+                self.url_entry.delete(0, END)
+                self.url_entry.insert(0, item[1])
+                self.status_var.set(f"已加载历史记录: {item[1][:30]}...")
+
+    def clear_history(self):
+        """清空历史记录"""
+        if messagebox.askyesno("确认", "确定要清空所有下载历史记录吗？"):
+            self.history_tree.delete(*self.history_tree.get_children())
+            self.config["history"] = []
+            self._save_config()
+            self.status_var.set("历史记录已清空")
+
+    def show_help(self):
+        """显示帮助对话框"""
+        help_text = """
+小说下载专家 v2.1 使用帮助
+
+1. 在起始URL栏输入小说第一章的链接
+2. 设置保存路径和文件名
+3. 根据需要调整反爬级别和请求延迟
+4. 点击"开始下载"按钮开始下载
+5. 在"下载历史"选项卡中查看和管理历史记录
+
+功能特点：
+- 智能内容提取，自动过滤广告
+- 支持多种小说网站
+- 历史记录管理
+- 常用网站快捷入口
+- 下载完成后自动打开文件
+
+提示：
+- 遇到复杂网站可尝试提高反爬级别
+- 下载速度过快可能被网站屏蔽，适当增加延迟
+- 历史记录双击可直接加载
+"""
+        messagebox.showinfo("使用帮助", help_text)
+
+    def browse_file(self):
+        """浏览文件保存位置"""
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("文本文件", "*.txt"), ("所有文件", "*.*")],
+            title="保存小说文件"
+        )
+        if filename:
+            self.file_entry.delete(0, END)
+            self.file_entry.insert(0, filename)
+            self.config["last_save_path"] = filename
+            self._save_config()
+
+    def log(self, message):
+        """记录日志"""
+        timestamp = time.strftime("%H:%M:%S", time.localtime())
+        self.log_text.insert(END, f"[{timestamp}] {message}\n")
+        self.log_text.see(END)
+        self.status_var.set(message)
+        self.root.update()
+
+    def clear_log(self):
+        """清空日志"""
+        self.log_text.delete(1.0, END)
+        self.status_var.set("日志已清空")
+
+    def test_connection(self):
+        """测试连接"""
+        url = self.url_entry.get().strip()
+        if not url:
+            messagebox.showerror("错误", "请输入小说起始页URL")
+            return
+
+        self.log(f"测试连接: {url}")
+
+        try:
+            # 尝试获取域名
+            domain = urlparse(url).netloc
+            if domain:
+                self.log(f"检测到域名: {domain}")
+                self.current_site = domain
+
+            # 简单请求测试
+            response = requests.head(url, timeout=10)
+            self.log(f"连接测试成功! 状态码: {response.status_code}")
+            return True
+        except Exception as e:
+            self.log(f"连接测试失败: {str(e)}")
+            return False
+
+    def start_download(self):
+        """开始下载小说"""
+        if self.is_downloading:
+            return
+
+        url = self.url_entry.get().strip()
+        filename = self.file_entry.get().strip()
+
+        if not url:
+            messagebox.showerror("错误", "请输入小说起始页URL")
+            return
+
+        if not filename:
+            messagebox.showerror("错误", "请输入保存文件名")
+            return
+
+        # 检查文件是否存在
+        if os.path.exists(filename) and not self.overwrite_var.get():
+            response = messagebox.askyesno("文件已存在", "目标文件已存在，是否覆盖？")
+            if not response:
+                return
+
+        try:
+            delay = float(self.delay_var.get())
+            max_chapters = int(self.max_chapters.get())
+        except ValueError:
+            messagebox.showerror("错误", "请输入有效的数字")
+            return
+
+        self.is_downloading = True
+        self.stop_requested = False
+        self.start_btn.config(state=DISABLED)
+        self.stop_btn.config(state=NORMAL)
+        self.progress_var.set(0)
+        self.log_text.delete(1.0, END)
+
+        # 保存当前URL到配置
+        self.config["last_url"] = url
+        self._save_config()
+
+        # 在新线程中运行下载
+        Thread(target=self.download_novel, args=(url, filename, delay, max_chapters), daemon=True).start()
+
+    def stop_download(self):
+        """停止下载"""
+        self.stop_requested = True
+        self.log("用户请求停止下载...")
+
+    def get_page(self, url, delay=1.5):
+        """获取页面内容，绕过反爬机制"""
+        try:
+            # 随机延迟
+            sleep_time = delay * random.uniform(0.8, 1.2)
+            time.sleep(sleep_time)
+
+            # 生成动态请求头
+            headers = {
+                'User-Agent': random.choice([
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.0.0 Safari/537.36",
+                    "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.0.0 Safari/537.36",
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 12_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:106.0) Gecko/20100101 Firefox/106.0"
+                ]),
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                'Referer': 'https://www.google.com/',
+                'DNT': '1',
+                'Connection': 'keep-alive'
+            }
+
+            anti_level = self.anti_level.get()
+
+            # 根据反爬级别选择策略
+            if anti_level in ["高级", "极限"]:
+                self.log(f"使用CloudScraper获取页面 [延迟: {sleep_time:.2f}s]")
+                response = self.scraper.get(url, headers=headers, timeout=30)
+            else:
+                self.log(f"使用Requests获取页面 [延迟: {sleep_time:.2f}s]")
+                response = requests.get(url, headers=headers, timeout=30)
+
+            # 处理编码
+            if 'charset' in response.headers.get('content-type', '').lower():
+                encoding = re.search(r'charset=([\w-]+)', response.headers['content-type']).group(1)
+            else:
+                # 尝试从HTML中检测编码
+                encoding_match = re.search(r'<meta.*?charset=["\']?([\w-]+)', response.text[:2000], re.I)
+                encoding = encoding_match.group(1) if encoding_match else 'gbk'
+
+            try:
+                response.encoding = encoding
+                return BeautifulSoup(response.text, 'html.parser')
+            except:
+                # 如果编码失败，尝试手动解码
+                try:
+                    return BeautifulSoup(response.content.decode(encoding, errors='replace'), 'html.parser')
+                except:
+                    return BeautifulSoup(response.text, 'html.parser')
+
+        except Exception as e:
+            self.log(f"获取页面失败: {str(e)}")
+            return None
+
+    def extract_novel_content(self, soup):
+        """专业级小说内容提取器 - 增强版"""
+        if soup is None:
+            self.log("警告: soup对象为None，无法提取内容")
+            return None
+
+        try:
+            # 先移除已知广告区域
+            ad_selectors = [
+                'div.ad', 'div.ads', 'div.ad-container', 'div.vip', 'div.pagination',
+                'div.tags', 'div.related', 'div.comments', 'footer', 'header', 'nav',
+                'div.share', 'div.author', 'div.breadcrumb', 'div.recommend', 'div.hot',
+                'div.prev-next', 'div.page-nav', 'div.chapter-nav', 'div.chapter-list',
+                'div.post-tags', 'div.entry-meta', 'div.entry-footer', 'div.entry-header',
+                'div.sidebar', 'div.widget', 'div.promo', 'div.banner', 'div.sponsor'
+            ]
+
+            for selector in ad_selectors:
+                for ad in soup.select(selector):
+                    if ad is None:
+                        continue
+                    try:
+                        ad.decompose()
+                    except Exception as e:
+                        continue
+
+            # 策略1: 尝试已知内容选择器（优先级更高）
+            content_selectors = [
+                'div.article-content',
+                'div#content',
+                'div.content',
+                'div.text',
+                'div.read-content',
+                'div.novel-content',
+                'div.chapter-content',
+                'div.entry-content',
+                'div.post-content',
+                'div.main-content',
+                'div.article-body',
+                'div.story-content',
+                'div.chapter-text'
+            ]
+
+            for selector in content_selectors:
+                content_div = soup.select_one(selector)
+                if content_div:
+                    self.log(f"使用选择器: {selector}")
+                    # 移除内容区域内的广告元素
+                    for ad in content_div.find_all(['div', 'a', 'span', 'p', 'img']):
+                        if ad is None:
+                            continue
+                        try:
+                            classes = ad.get('class', [])
+                            if isinstance(classes, str):
+                                classes = [classes]
+                            ad_id = ad.get('id', '')
+                            ad_text = ad.get_text()
+
+                            # 检查广告特征
+                            ad_keywords = ['ad', 'vip', 'banner', 'promo', 'register', 'download', 'click', 'free']
+                            if any(kw in ' '.join(classes).lower() for kw in ad_keywords) or \
+                                    any(kw in ad_id.lower() for kw in ad_keywords) or \
+                                    any(kw in ad_text.lower() for kw in ad_keywords):
+                                ad.decompose()
+                        except:
+                            continue
+                    return content_div
+
+            # 策略2: 智能内容探测（增强版）
+            self.log("智能探测内容区域...")
+            all_divs = soup.find_all(['div', 'article', 'section'])
+            candidate = None
+            max_text_score = 0
+
+            for element in all_divs:
+                # 跳过已知广告容器
+                if element is None:
+                    continue
+                elem_class = element.get('class', [])
+                elem_id = element.get('id', '')
+                ad_keywords = ['ad', 'vip', 'banner', 'promo', 'footer', 'header', 'sidebar', 'nav',
+                               'pagination', 'tags', 'related', 'comments', 'share', 'author', 'breadcrumb',
+                               'recommend', 'hot', 'prev-next', 'page-nav', 'chapter-nav', 'chapter-list',
+                               'post-tags', 'entry-meta', 'entry-footer', 'entry-header', 'widget', 'sponsor']
+                if any(kw in ' '.join(elem_class).lower() for kw in ad_keywords) or \
+                        any(kw in elem_id.lower() for kw in ad_keywords):
+                    continue
+
+                text = element.get_text()
+                text_length = len(text)
+
+                # 计算文本评分 (长度 + 段落密度)
+                paragraph_count = len(text.split('\n'))
+                text_score = text_length * (paragraph_count / max(1, text_length))
+
+                # 跳过广告特征明显的元素
+                ad_text_keywords = ['vip', '开通', '广告', '注册', '送', '元', '点击', '下载', '领取']
+                if any(kw in text.lower() for kw in ad_text_keywords):
+                    continue
+
+                if text_score > max_text_score and text_length > 500:
+                    max_text_score = text_score
+                    candidate = element
+
+            if candidate:
+                self.log(f"智能发现内容区域 (评分: {max_text_score:.1f})")
+                return candidate
+
+            # 策略3: 回退到body
+            self.log("使用整个body作为内容区域")
+            return soup.body
+
+        except Exception as e:
+            self.log(f"提取内容时发生错误: {str(e)}")
+            return None
+
+
+    def extract_book_title(self, text):
+        """从文本开头提取书名（《...》格式）"""
+        try:
+            # 提取书名的正则表达式
+            title_match = re.search(r'《([^》]+)》', text)
+
+            return title_match
+        except Exception as e:
+            self.log(f"提取书名时出错: {str(e)}")
+            return None
+
+
+    def clean_novel_text(self, text):
+        """专业级小说内容清理 - 增强版"""
+        try:
+            # 首先提取书名并保存
+            book_title = self.extract_book_title(text)
+            if book_title:
+                self.log(f"提取到书名: {book_title}")
+                # 从文本中移除书名格式
+                text = re.sub(r'《[^》]+》', '', text)
+
+            # 保存主标题引用
+            main_title = getattr(self, 'novel_main_title', '')
+
+            # 第一阶段：移除已知广告模式
+            ad_patterns = [
+                r'开通VIP[\s\S]*?视频小说随便看',
+                r'打开[^\n]*?直营',
+                r'注册[^\n]*?送[\d]+元',
+                r'首[^\n]*?[\d\.]+%',
+                r'点击继续阅读',
+                r'下载[\s\S]*?App'
+                r'领取体验',
+                r'站长担保',
+                r'PS:.*',
+                r'注:.*',
+                r'\(本章完\)',
+                r'【[^】]*】',  # 确保移除任何剩余的【】标签
+                r'【.*?】',
+                r'（.*?）',
+                r'&nbsp;',
+                r'\s{3,}',
+                r'[\u25A0-\u25FF\u2605-\u2606\u2190-\u21FF]',  # 特殊符号
+
+
+                r'女王小说\s*>.*?>',
+                r'共\d+页:\s*上一页.*?下一页',
+                r'标签：[\s\S]*',  # 删掉标签之后所有的东西
+                r'上一篇：.*',
+                r'下一篇：.*',
+                r'没有了',
+                r'开元集团.*?官方直营',
+                r'款秒到',
+                r'电子婚娶率\s*\d+%',
+                r'^[\w\u4e00-\u9fa5]+小说网\s*>\s*[\w\u4e00-\u9fa5]+\s*>\s*',
+                r'巨额奖池\s*一夜暴富',
+                r'上一页.*?下一页',
+                r'nwxs.*?cc',
+                r'c.*?cc',
+                r'nv.*?com',
+                r'【[^】]*?女王小说[^】]*?】',
+
+                r'开元担保.*?官方直营',
+                r'注册即送.*?首台涨奖\d+%',
+                r'火爆排版电子.*?保姆奖',
+                r'站长独家',
+                r'喜欢.*?开元担保.*?官方直营',
+                r'上一页.*?共\d+页',
+
+
+            r'[a-zA-Z0-9]{5,}\.com',  # 网址
+            r'www\.[^\s]+',  # 网址
+            r'https?://[^\s]+',  # 网址
+            r'[a-zA-Z0-9]{8,}',  # 长字符串（可能是广告ID）
+            r'[^\u4e00-\u9fa5a-zA-Z0-9\s]{3,}',  # 连续特殊字符
+            r'^.{1,3}?\s*[↓↑→←↑↓→←]\s*.{1,3}?$',  # 箭头导航
+            r'^.{1,5}?[（(].{1,5}?[）)]$',  # 短括号内容
+            r'^\d{1,2}\s*[、.]\s*.{1,10}$',  # 序号列表（可能是推荐）
+            r'^.{1,10}?[：:].{1,10}?$',  # 短冒号内容
+            r'^[「『].{1,10}[」』]$',  # 单引号短内容
+            r'本书由.*?整理提供',
+            r'由.*?制作',
+            r'更多.*?请搜索.*?',
+            r'请记住本书首发地址.*?',
+            r'最新章节请访问.*?',
+            r'推荐阅读.*?',
+            r'喜欢.*?请关注.*?',
+            r'以下是.*?推荐内容',
+            r'本章未完.*?点击下一页继续阅读',
+            r'点击查看下一章',
+            r'上一章.*?下一章',
+            r'返回目录.*?',
+            r'加入书架.*?',
+            r'收藏本书.*?',
+            r'手机用户.*?',
+            r'电脑用户.*?',
+            r'扫码关注.*?',
+            r'微信公众号.*?',
+            r'QQ群.*?',
+            r'作者有话说.*?',
+            r'编辑推荐.*?',
+            r'读者评论.*?',
+            r'本书评分.*?',
+            r'字数统计.*?',
+            r'更新时间.*?',
+            r'最后更新.*?',
+            r'本章字数.*?',
+            r'上一章.*?下一章.*?返回目录',
+            r'[^\u4e00-\u9fa5]{5,}?\s*[^\u4e00-\u9fa5]{5,}',  # 连续非中文
+            r'[\u4e00-\u9fa5]{1,2}\s*[→←↑↓]\s*[\u4e00-\u9fa5]{1,2}',  # 中文箭头导航
+            ]
+
+            for pattern in ad_patterns:
+                text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+
+            # 清理空白字符（增强）
+            text = re.sub(r'\n{3,}', '\n\n', text)  # 减少多余空行
+            text = re.sub(r'^\s+', '', text, flags=re.MULTILINE)  # 清理行首空白
+            text = re.sub(r'\s+$', '', text, flags=re.MULTILINE)  # 清理行尾空白
+
+            # 清理空白字符（增强）
+            text = re.sub(r'\n{3,}', '\n\n', text)  # 减少多余空行
+            text = re.sub(r'^\s+', '', text, flags=re.MULTILINE)  # 清理行首空白
+            text = re.sub(r'\s+$', '', text, flags=re.MULTILINE)  # 清理行尾空白
+
+            # ==== 新增智能分段逻辑 ====
+            # 1. 按句子结束符分割文本
+            sentences = re.split(r'(?<=[。！？；：])\s+', text)
+
+            # 2. 智能合并短句并创建段落
+            paragraphs = []
+            current_paragraph = ""
+
+            for sentence in sentences:
+                # 跳过空句子
+                if not sentence.strip():
+                    continue
+
+                # 检测章节标题（如"第一章"、"第1节"等）
+                if re.match(r'^第[零一二三四五六七八九十百千\d]+[章节卷集部]', sentence):
+                    # 如果是章节标题，开始新段落
+                    if current_paragraph:
+                        paragraphs.append('    ' + current_paragraph.strip())
+                        current_paragraph = ""
+                    paragraphs.append(sentence.strip())
+                    continue
+
+                # 合并到当前段落
+                if len(current_paragraph) + len(sentence) < 200:  # 段落长度限制
+                    current_paragraph += sentence
+                else:
+                    # 当前段落达到长度限制，开始新段落
+                    if current_paragraph:
+                        paragraphs.append('    ' + current_paragraph.strip())
+                    current_paragraph = sentence
+
+            # 添加最后一个段落
+            if current_paragraph:
+                paragraphs.append('    ' + current_paragraph.strip())
+
+            # 3. 处理对话分行（特别优化）
+            formatted_paragraphs = []
+            for para in paragraphs:
+                # 检测对话模式（如："xxx说："、"xxx道："等）
+                if re.search(r'[，,:：]\s*["「『]', para) and not re.search(r'第[^\s]+章', para):
+                    # 按引号分行
+                    dialogue_lines = re.split(r'([「『][^」』]*[」』])', para)
+                    formatted_dialogue = []
+                    for line in dialogue_lines:
+                        if line.strip():
+                            # 添加缩进使对话更清晰
+                            formatted_dialogue.append('        ' + line.strip())
+                    if formatted_dialogue:
+                        formatted_paragraphs.extend(formatted_dialogue)
+                else:
+                    formatted_paragraphs.append(para)
+
+            return '\n\n'.join(formatted_paragraphs)
+
+        except Exception as e:
+            self.log(f"文本清理出错: {str(e)}")
+            return text  # 返回原始文本作为备选
+
+    def extract_title(self, soup):
+        """提取精确标题 - 增强版"""
+        if soup is None:
+            self.log("警告: soup对象为None，无法提取标题")
+            return "未知章节"
+
+        try:
+            # 先移除已知广告区域
+            ad_selectors = ['div.ad', 'div.ads', 'div.vip', 'div.pagination', 'div.breadcrumb']
+            for ad_selector in ad_selectors:
+                for ad in soup.select(ad_selector):
+                    try:
+                        ad.decompose()
+                    except:
+                        continue
+
+            # 尝试多种标题位置
+            title_selectors = [
+                'h1.article-title',
+                'h1.title',
+                'h1.entry-title',
+                'h1',
+                'title'
+            ]
+
+            for selector in title_selectors:
+                title_tag = soup.select_one(selector)
+                if title_tag:
+                    title = title_tag.get_text().strip()
+                    # 深度清理标题中的广告
+                    title = re.sub(r'[-|_]\s*npford\.com$', '', title, flags=re.IGNORECASE)
+                    title = re.sub(r'女王小说网\s*>.*?>', '', title)
+                    title = re.sub(r'【.*?】', '', title)
+                    title = re.sub(r'开元集团.*?官方直营', '', title)
+                    title = re.sub(r'猪款秒到', '', title)
+                    title = re.sub(r'电子婚娶率\s*\d+%', '', title)
+                    title = re.sub(r'巨额奖池\s*一夜暴富', '', title)
+                    title = re.sub(r'^_', '', title)  # 移除开头的下划线
+                    return title.strip()
+
+            # 使用URL作为备选标题
+            return f"章节 {random.randint(1, 100)}"
+
+        except Exception as e:
+            self.log(f"提取标题时出错: {str(e)}")
+            return "未知章节"
+
+    def extract_next_page(self, soup, current_url):
+        """提取下一页链接 - 增强版"""
+        if soup is None:
+            self.log("警告: soup对象为None，无法提取下一页")
+            return None
+
+        try:
+            # 先移除已知广告区域
+            for ad_selector in ['div.ad', 'div.ads', 'div.vip']:
+                for ad in soup.select(ad_selector):
+                    try:
+                        ad.decompose()
+                    except:
+                        continue
+
+            # 尝试多种下一页位置
+            next_selectors = [
+                'a:contains("下一页")',
+                'a:contains("下一章")',
+                'a.next',
+                'a.next-page',
+                'a.next-chapter',
+                'div.pagination a:last-child',
+                'div.chapter-nav a:last-child'
+            ]
+
+            for selector in next_selectors:
+                next_link = soup.select_one(selector)
+                if next_link and next_link.get('href'):
+                    href = next_link.get('href')
+                    # 过滤广告链接
+                    ad_keywords = ['ad', 'vip', 'register', 'download']
+                    if any(kw in href.lower() for kw in ad_keywords):
+                        continue
+                    # 确保不是当前页
+                    if href == current_url or href == "#" or not href.strip():
+                        continue
+                    return urljoin(current_url, href)
+
+            return None
+
+        except Exception as e:
+            self.log(f"提取下一页时出错: {str(e)}")
+            return None
+
+    def download_novel(self, start_url, filename, delay=1.5, max_chapters=100):
+        """下载小说主函数"""
+        try:
+            # 准备文件
+            os.makedirs(os.path.dirname(filename) or '.', exist_ok=True)
+
+            self.log(f"开始下载: {start_url}")
+            self.log(f"保存路径: {os.path.abspath(filename)}")
+
+            with open(filename, 'w', encoding='utf-8') as f:
+                current_url = start_url
+                chapter_count = 0
+                visited_urls = set()
+                novel_title = "小说"
+
+                # 获取第一页
+                soup = self.get_page(current_url, delay)
+                if soup:
+                    novel_title = self.extract_title(soup)
+                    f.write(f"《{novel_title}》\n\n")
+                    self.log(f"小说标题: {novel_title}")
+                else:
+                    self.log("警告: 无法获取起始页内容")
+                    f.write(f"《{novel_title}》\n\n")
+
+                # 下载循环
+                while current_url and not self.stop_requested and chapter_count < max_chapters:
+                    if current_url in visited_urls:
+                        self.log(f"检测到循环链接: {current_url}")
+                        break
+
+                    visited_urls.add(current_url)
+
+                    # 获取页面
+                    soup = self.get_page(current_url, delay)
+                    if not soup:
+                        self.log(f"页面获取失败: {current_url}")
+                        # 尝试重新获取一次
+                        self.log(f"尝试重新获取页面: {current_url}")
+                        soup = self.get_page(current_url, delay * 1.5)
+                        if not soup:
+                            self.log(f"重试失败，跳过本章: {current_url}")
+                            chapter_count += 1
+                            # 更新进度
+                            progress = min(100, chapter_count / max_chapters * 100)
+                            self.progress_var.set(progress)
+                            self.progress_label.config(text=f"进度: {chapter_count}/{max_chapters}章")
+                            continue
+
+                    # 提取内容
+                    title = self.extract_title(soup)
+                    self.log(f"下载中: {title} ({chapter_count + 1}/{max_chapters})")
+
+                    content_div = self.extract_novel_content(soup)
+                    if content_div is not None:
+                        try:
+                            # 获取并清理文本
+                            raw_text = content_div.get_text()
+                            clean_text = self.clean_novel_text(raw_text)
+
+                            # 写入文件
+                            f.write(f"【{title}】\n\n")
+                            f.write(clean_text)
+                            f.write("\n\n")
+                        except Exception as e:
+                            self.log(f"处理内容时出错: {str(e)}")
+                            f.write(f"【{title}】\n\n")
+                            f.write("（内容处理出错）\n\n")
+                    else:
+                        self.log("警告: 未找到内容区域")
+                        f.write(f"【{title}】\n\n\n")
+
+                    chapter_count += 1
+
+                    # 更新进度
+                    progress = min(100, chapter_count / max_chapters * 100)
+                    self.progress_var.set(progress)
+                    self.progress_label.config(text=f"进度: {chapter_count}/{max_chapters}章")
+
+                    # 查找下一页
+                    next_url = self.extract_next_page(soup, current_url)
+                    if not next_url:
+                        self.log("未找到下一页，下载结束")
+                        break
+
+                    if next_url == current_url:
+                        self.log("下一页链接与当前页相同，下载结束")
+                        break
+
+                    current_url = next_url
+
+                # 完成处理
+                if self.stop_requested:
+                    self.log(f"下载已停止，共下载 {chapter_count} 章")
+                else:
+                    self.log(f"下载完成! 共下载 {chapter_count} 章")
+
+                self.log(f"小说已保存至: {os.path.abspath(filename)}")
+
+                # 保存历史记录
+                self._save_history(start_url, filename)
+
+                # 自动打开
+                if self.auto_open_var.get() and os.path.exists(filename):
+                    self.log("正在打开文件...")
+                    try:
+                        if platform.system() == 'Darwin':  # macOS
+                            os.system(f'open "{filename}"')
+                        elif platform.system() == 'Windows':  # Windows
+                            os.startfile(filename)
+                        else:  # Linux
+                            os.system(f'xdg-open "{filename}"')
+                    except Exception as e:
+                        self.log(f"打开文件失败: {str(e)}")
+
+        except Exception as e:
+            self.log(f"发生错误: {str(e)}")
+        finally:
+            self.is_downloading = False
+            self.start_btn.config(state=NORMAL)
+            self.stop_btn.config(state=DISABLED)
+            self.progress_label.config(text="下载完成!")
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = NovelScraperPro(root)
+    root.mainloop()

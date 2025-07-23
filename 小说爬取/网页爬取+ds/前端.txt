@@ -1,0 +1,1573 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DeepSeek Pro - 增强版客户端</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docx@7.4.1/build/index.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+  <!-- Tailwind 配置 -->
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: '#0f3057',
+            secondary: '#005b4c',
+            accent: '#ff6b6b',
+            neutral: '#f8f9fa',
+            dark: '#1a1a2e',
+          },
+          fontFamily: {
+            inter: ['Inter', 'system-ui', 'sans-serif'],
+          },
+        },
+      }
+    }
+  </script>
+
+  <style type="text/tailwindcss">
+    @layer base {
+      body {
+        @apply bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800;
+      }
+    }
+    @layer utilities {
+      .content-auto {
+        content-visibility: auto;
+      }
+      .scrollbar-hide {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+      .scrollbar-hide::-webkit-scrollbar {
+        display: none;
+      }
+      .text-shadow {
+        text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      }
+      .transition-all-300 {
+        transition: all 0.3s ease;
+      }
+      .file-upload-label {
+        @apply inline-flex items-center px-3 py-2 border border-gray-300 rounded-md text-sm font-medium cursor-pointer transition-colors;
+        @apply bg-white text-gray-700 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-200 dark:border-gray-600 dark:hover:bg-gray-600;
+      }
+      .file-name {
+        @apply text-xs text-gray-600 mt-1 overflow-hidden text-ellipsis whitespace-nowrap max-w-full dark:text-gray-400;
+      }
+      .token-counter {
+        @apply absolute top-3 right-3 bg-white/80 px-2 py-1 rounded-full text-xs font-medium shadow-sm dark:bg-gray-800/80 dark:text-gray-200;
+      }
+      .token-warning {
+        @apply bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 dark:bg-yellow-900/30 dark:border-yellow-600 dark:text-yellow-300;
+      }
+      .token-danger {
+        @apply bg-red-100 border-l-4 border-red-500 text-red-700 dark:bg-red-900/30 dark:border-red-600 dark:text-red-300;
+      }
+      .bg-gradient-deepseek {
+        @apply bg-gradient-to-r from-primary to-secondary;
+      }
+      .model-card {
+        @apply bg-white rounded-lg p-4 shadow-sm border border-gray-200 transition-all duration-300 dark:bg-gray-800 dark:border-gray-700;
+      }
+      .model-card.active {
+        @apply border-2 border-primary shadow-md dark:border-secondary;
+      }
+      .chat-message-user {
+        @apply bg-blue-50 dark:bg-gray-700 rounded-lg p-4 mb-4;
+      }
+      .chat-message-assistant {
+        @apply bg-white dark:bg-gray-800 rounded-lg p-4 mb-4 border border-gray-200 dark:border-gray-700;
+      }
+      .tab-button {
+        @apply px-4 py-2 rounded-t-lg font-medium transition-colors;
+      }
+      .tab-button.active {
+        @apply bg-white text-primary dark:bg-gray-800 dark:text-secondary border-t border-l border-r border-gray-200 dark:border-gray-700;
+      }
+      .tab-button.inactive {
+        @apply bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600;
+      }
+    }
+  </style>
+</head>
+<body class="font-inter text-gray-800 min-h-screen flex flex-col dark:text-gray-200">
+  <!-- 顶部导航栏 -->
+  <header class="bg-gradient-deepseek text-white shadow-lg sticky top-0 z-50">
+    <div class="container mx-auto px-4 py-3 flex flex-col sm:flex-row justify-between items-center">
+      <div class="flex items-center space-x-3 mb-3 sm:mb-0">
+        <i class="fa fa-brain text-white text-2xl"></i>
+        <div>
+          <h1 class="text-xl font-bold">DeepSeek Pro</h1>
+          <p class="text-xs opacity-80">增强版客户端 - 支持Vision & 128K上下文 & 小说下载</p>
+        </div>
+      </div>
+
+      <div class="flex items-center space-x-4">
+        <div class="text-xs bg-white/20 px-2 py-1 rounded-full">
+          <i class="fa fa-database mr-1"></i>最大输入: 128K tokens
+        </div>
+        <button id="theme-toggle" class="p-2 rounded-full hover:bg-white/20 transition-all duration-300">
+          <i class="fa fa-moon-o text-white"></i>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 主内容区 -->
+  <main class="flex-grow container mx-auto px-4 py-6">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <!-- 左侧控制面板 -->
+      <div class="lg:col-span-1 space-y-6">
+        <!-- API配置 -->
+        <div class="bg-white rounded-xl shadow-lg p-5 dark:bg-gray-800">
+          <div class="flex items-center mb-4">
+            <i class="fa fa-key text-primary mr-2 dark:text-secondary"></i>
+            <h2 class="text-lg font-semibold">API 配置</h2>
+          </div>
+
+          <div class="bg-gray-100 p-4 rounded-lg dark:bg-gray-700">
+            <p class="text-gray-700 dark:text-gray-300">API 密钥已安全配置</p>
+            <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+              <i class="fa fa-lock mr-1"></i>
+              密钥已加密存储，不会在前端暴露
+            </div>
+          </div>
+
+          <!-- 模型选择卡片 -->
+          <div class="mt-6">
+            <h3 class="text-sm font-medium text-gray-700 mb-3 dark:text-gray-300">选择模型</h3>
+            <div class="grid grid-cols-3 gap-3">
+              <div class="model-card" data-model="deepseek-chat">
+                <div class="flex items-center">
+                  <div class="w-3 h-3 rounded-full bg-primary mr-2 dark:bg-secondary"></div>
+                  <span class="text-sm font-medium">Chat</span>
+                </div>
+                <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                  <i class="fa fa-comments mr-1"></i>通用对话
+                </div>
+                <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  <i class="fa fa-database mr-1"></i>128K tokens
+                </div>
+              </div>
+
+              <div class="model-card" data-model="deepseek-coder">
+                <div class="flex items-center">
+                  <div class="w-3 h-3 rounded-full bg-blue-500 mr-2"></div>
+                  <span class="text-sm font-medium">Coder</span>
+                </div>
+                <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                  <i class="fa fa-code mr-1"></i>编程任务
+                </div>
+                <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  <i class="fa fa-database mr-1"></i>128K tokens
+                </div>
+              </div>
+
+              <div class="model-card" data-model="deepseek-vision">
+                <div class="flex items-center">
+                  <div class="w-3 h-3 rounded-full bg-green-500 mr-2"></div>
+                  <span class="text-sm font-medium">Vision</span>
+                </div>
+                <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                  <i class="fa fa-image mr-1"></i>图像分析
+                </div>
+                <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  <i class="fa fa-database mr-1"></i>128K tokens
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 参数控制 -->
+          <div class="mt-6 space-y-4">
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">温度</label>
+                <span id="temperature-value" class="text-sm font-medium">0.7</span>
+              </div>
+              <input
+                type="range"
+                id="temperature"
+                min="0"
+                max="2"
+                step="0.1"
+                value="0.7"
+                class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary dark:bg-gray-700"
+              >
+              <div class="text-xs text-gray-500 mt-1 dark:text-gray-400">
+                控制生成随机性 (0=确定, 2=创意)
+              </div>
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">最大输出长度</label>
+                <span id="max-tokens-value" class="text-sm font-medium">4096</span>
+              </div>
+              <input
+                type="range"
+                id="max-tokens"
+                min="100"
+                max="4096"
+                step="100"
+                value="4096"
+                class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary dark:bg-gray-700"
+              >
+              <div class="text-xs text-gray-500 mt-1 dark:text-gray-400">
+                最大输出token数 (0-4096)
+              </div>
+            </div>
+          </div>
+
+          <!-- Vision选项 -->
+          <div id="vision-options" class="mt-6 hidden">
+            <h3 class="text-sm font-medium text-gray-700 mb-2 dark:text-gray-300">图像设置</h3>
+            <div class="space-y-3">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1 dark:text-gray-300">细节级别</label>
+                <select id="image-detail" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
+                  <option value="auto">自动</option>
+                  <option value="low">低细节 (更快)</option>
+                  <option value="high">高细节 (更精确)</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1 dark:text-gray-300">图像任务</label>
+                <select id="image-task" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
+                  <option value="describe">描述内容</option>
+                  <option value="ocr">提取文字</option>
+                  <option value="analyze">详细分析</option>
+                  <option value="qa">问答</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 输入控制 -->
+        <div class="bg-white rounded-xl shadow-lg p-5 dark:bg-gray-800">
+          <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center">
+              <i class="fa fa-upload text-primary mr-2 dark:text-secondary"></i>
+              <h2 class="text-lg font-semibold">输入内容</h2>
+            </div>
+            <button id="clear-input" class="text-gray-500 hover:text-gray-700 transition-colors dark:hover:text-gray-300">
+              <i class="fa fa-trash"></i> 清空
+            </button>
+          </div>
+
+          <!-- 文件上传 -->
+          <div class="mb-4">
+            <div class="grid grid-cols-2 gap-2">
+              <label for="file-upload" class="file-upload-label">
+                <i class="fa fa-file-text-o mr-2"></i>
+                TXT文档
+              </label>
+              <label for="image-upload" class="file-upload-label">
+                <i class="fa fa-image mr-2"></i>
+                上传图片
+              </label>
+            </div>
+            <input id="file-upload" type="file" accept=".txt" class="hidden">
+            <input id="image-upload" type="file" accept="image/*" class="hidden">
+            <div class="mt-2">
+              <div id="file-name" class="file-name">未选择文档</div>
+              <div id="image-name" class="file-name">未选择图片</div>
+            </div>
+          </div>
+
+          <!-- 图像预览 -->
+          <div id="image-preview" class="mt-3 hidden">
+            <div class="flex justify-between items-center mb-2">
+              <span class="text-sm font-medium text-gray-700 dark:text-gray-300">图片预览</span>
+              <button id="remove-image" class="text-red-500 hover:text-red-700 text-sm">
+                <i class="fa fa-times mr-1"></i>移除
+              </button>
+            </div>
+            <img id="preview-image" class="w-full h-40 object-contain rounded-lg border border-gray-300 dark:border-gray-600">
+          </div>
+
+          <!-- 发送按钮 -->
+          <button
+            id="send-request"
+            class="mt-6 w-full bg-gradient-to-r from-primary to-secondary hover:from-primary/90 hover:to-secondary/90 text-white font-medium py-3 px-4 rounded-lg transition-all duration-300 transform hover:translate-y-[-2px] flex items-center justify-center shadow-md"
+          >
+            <i class="fa fa-paper-plane mr-2"></i>
+            发送请求
+          </button>
+        </div>
+
+        <!-- Token状态 -->
+        <div class="bg-white rounded-xl shadow-lg p-5 dark:bg-gray-800">
+          <div class="flex items-center mb-4">
+            <i class="fa fa-dashboard text-primary mr-2 dark:text-secondary"></i>
+            <h2 class="text-lg font-semibold">Token 状态</h2>
+          </div>
+
+          <div class="space-y-4">
+            <div>
+              <div class="flex justify-between items-center mb-1">
+                <span class="text-sm text-gray-700 dark:text-gray-300">输入文本</span>
+                <span id="input-tokens" class="text-sm font-medium">0 tokens</span>
+              </div>
+              <div class="h-2 bg-gray-200 rounded-full dark:bg-gray-700">
+                <div id="token-progress" class="h-2 bg-green-500 rounded-full" style="width: 0%"></div>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+              <div class="bg-gray-100 p-3 rounded-lg dark:bg-gray-700">
+                <div class="text-sm text-gray-700 dark:text-gray-300">最大输入</div>
+                <div id="max-input-tokens" class="text-lg font-bold">128K tokens</div>
+              </div>
+
+              <div class="bg-gray-100 p-3 rounded-lg dark:bg-gray-700">
+                <div class="text-sm text-gray-700 dark:text-gray-300">最大输出</div>
+                <div id="max-output-tokens" class="text-lg font-bold">4096 tokens</div>
+              </div>
+            </div>
+
+            <div id="token-warning" class="p-3 rounded-lg hidden">
+              <div class="flex items-start">
+                <i class="fa fa-exclamation-triangle text-yellow-500 mt-1 mr-2"></i>
+                <div>
+                  <div class="font-medium">接近模型限制</div>
+                  <p class="text-sm mt-1">您的输入接近模型的最大token限制，可能会影响结果质量。</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右侧内容区 -->
+      <div class="lg:col-span-2 space-y-6">
+        <!-- 选项卡 -->
+        <div class="flex border-b border-gray-200 dark:border-gray-700">
+          <button id="chat-tab" class="tab-button active">
+            <i class="fa fa-comments mr-2"></i>聊天
+          </button>
+          <button id="novel-tab" class="tab-button inactive">
+            <i class="fa fa-book mr-2"></i>小说下载
+          </button>
+          <button id="history-tab" class="tab-button inactive">
+            <i class="fa fa-history mr-2"></i>历史记录
+          </button>
+        </div>
+
+        <!-- 聊天内容区 -->
+        <div id="chat-content" class="space-y-6">
+          <!-- 输入区域 -->
+          <div class="bg-white rounded-xl shadow-lg p-5 dark:bg-gray-800">
+            <div class="relative">
+              <textarea
+                id="prompt"
+                rows="6"
+                placeholder="输入你的问题或指令..."
+                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none resize-none scrollbar-hide transition-all duration-200 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200"
+              ></textarea>
+              <div class="absolute right-3 bottom-3 text-xs text-gray-500 dark:text-gray-400">
+                <span id="char-count">0</span> 字符
+              </div>
+              <div id="token-counter" class="token-counter">0 tokens</div>
+            </div>
+          </div>
+
+          <!-- 响应区域 -->
+          <div class="bg-white rounded-xl shadow-lg p-5 dark:bg-gray-800">
+            <div class="flex items-center justify-between mb-4">
+              <div class="flex items-center">
+                <i class="fa fa-comments text-secondary mr-2"></i>
+                <h2 class="text-lg font-semibold">对话内容</h2>
+              </div>
+              <div class="flex space-x-2">
+                <button id="save-txt" class="text-gray-500 hover:text-gray-700 transition-colors dark:hover:text-gray-300" title="保存为TXT">
+                  <i class="fa fa-file-text-o"></i>
+                </button>
+                <button id="save-word" class="text-gray-500 hover:text-gray-700 transition-colors dark:hover:text-gray-300" title="保存为Word">
+                  <i class="fa fa-file-word-o"></i>
+                </button>
+                <button id="copy-response" class="text-gray-500 hover:text-gray-700 transition-colors dark:hover:text-gray-300" title="复制内容">
+                  <i class="fa fa-copy"></i>
+                </button>
+                <button id="clear-response" class="text-gray-500 hover:text-gray-700 transition-colors dark:hover:text-gray-300" title="清空响应">
+                  <i class="fa fa-trash-o"></i>
+                </button>
+              </div>
+            </div>
+
+            <div id="chat-container" class="min-h-[400px] max-h-[500px] p-4 border border-gray-200 rounded-lg bg-gray-50/50 overflow-auto scrollbar-hide dark:bg-gray-700/50 dark:border-gray-600">
+              <div class="text-gray-500 text-center py-16 dark:text-gray-400">
+                <i class="fa fa-comment-o text-4xl mb-3 opacity-50"></i>
+                <div class="text-lg">对话将显示在这里</div>
+                <p class="text-sm mt-2">输入内容并点击"发送请求"按钮开始对话</p>
+              </div>
+            </div>
+
+            <div id="response-stats" class="mt-3 text-sm text-gray-500 flex justify-between items-center dark:text-gray-400">
+              <div id="response-tokens">
+                <i class="fa fa-calculator mr-1"></i>
+                <span>0</span> 令牌
+              </div>
+              <div id="response-time">
+                <i class="fa fa-clock-o mr-1"></i>
+                <span>0</span> 秒
+              </div>
+              <div id="response-model">
+                <i class="fa fa-cube mr-1"></i>
+                <span>deepseek-chat</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 小说下载区 -->
+        <div id="novel-content" class="hidden space-y-6">
+          <div class="bg-white rounded-xl shadow-lg p-5 dark:bg-gray-800">
+            <div class="flex items-center mb-4">
+              <i class="fa fa-book text-primary mr-2 dark:text-secondary"></i>
+              <h2 class="text-lg font-semibold">小说下载设置</h2>
+            </div>
+
+            <div class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1 dark:text-gray-300">小说起始URL</label>
+                <input
+                  id="novel-url"
+                  type="text"
+                  placeholder="https://example.com/novel/chapter1.html"
+                  class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200"
+                >
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1 dark:text-gray-300">保存文件名</label>
+                <div class="flex">
+                  <input
+                    id="novel-filename"
+                    type="text"
+                    placeholder="novel.txt"
+                    class="flex-1 px-3 py-2 border border-gray-300 rounded-l-md focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200"
+                  >
+                  <button id="browse-novel" class="px-3 py-2 bg-gray-100 border border-gray-300 rounded-r-md text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-600">
+                    <i class="fa fa-folder-open"></i>
+                  </button>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-3 gap-3">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1 dark:text-gray-300">反爬级别</label>
+                  <select id="anti-level" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
+                    <option value="basic">基础</option>
+                    <option value="standard" selected>标准</option>
+                    <option value="advanced">高级</option>
+                    <option value="extreme">极限</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1 dark:text-gray-300">请求延迟 (秒)</label>
+                  <input
+                    id="scrape-delay"
+                    type="number"
+                    min="0.5"
+                    max="5"
+                    step="0.1"
+                    value="1.5"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200"
+                  >
+                </div>
+
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1 dark:text-gray-300">最大章节数</label>
+                  <input
+                    id="max-chapters"
+                    type="number"
+                    min="1"
+                    max="500"
+                    value="50"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200"
+                  >
+                </div>
+              </div>
+
+              <div class="flex space-x-4 pt-2">
+                <button
+                  id="start-scraping"
+                  class="flex-1 bg-gradient-to-r from-primary to-secondary hover:from-primary/90 hover:to-secondary/90 text-white font-medium py-2 px-4 rounded-lg transition-all duration-300 flex items-center justify-center"
+                >
+                  <i class="fa fa-download mr-2"></i>
+                  开始下载
+                </button>
+                <button
+                  id="stop-scraping"
+                  class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2 px-4 rounded-lg transition-all duration-300 flex items-center justify-center dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200"
+                  disabled
+                >
+                  <i class="fa fa-stop mr-2"></i>
+                  停止下载
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-xl shadow-lg p-5 dark:bg-gray-800">
+            <div class="flex items-center justify-between mb-4">
+              <div class="flex items-center">
+                <i class="fa fa-tasks text-primary mr-2 dark:text-secondary"></i>
+                <h2 class="text-lg font-semibold">下载进度</h2>
+              </div>
+              <div class="text-sm text-gray-500 dark:text-gray-400" id="scrape-status">
+                准备就绪
+              </div>
+            </div>
+
+            <div class="h-2 bg-gray-200 rounded-full dark:bg-gray-700 mb-2">
+              <div id="scrape-progress" class="h-2 bg-green-500 rounded-full" style="width: 0%"></div>
+            </div>
+
+            <div class="text-xs text-gray-500 dark:text-gray-400 flex justify-between">
+              <span id="chapters-done">0</span>
+              <span id="chapters-total">50</span>
+            </div>
+
+            <div class="mt-4 bg-gray-100 p-3 rounded-lg dark:bg-gray-700">
+              <div class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">当前章节</div>
+              <div id="current-chapter" class="text-xs text-gray-600 dark:text-gray-400 truncate">无</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 历史记录区 -->
+        <div id="history-content" class="hidden">
+          <div class="bg-white rounded-xl shadow-lg p-5 dark:bg-gray-800">
+            <div class="flex items-center justify-between mb-4">
+              <div class="flex items-center">
+                <i class="fa fa-history text-primary mr-2 dark:text-secondary"></i>
+                <h2 class="text-lg font-semibold">对话历史</h2>
+              </div>
+              <button id="clear-all-history" class="text-sm text-gray-500 hover:text-gray-700 transition-colors dark:hover:text-gray-300">
+                <i class="fa fa-trash mr-1"></i> 清空所有
+              </button>
+            </div>
+
+            <div id="history-list" class="space-y-3 max-h-[500px] overflow-y-auto scrollbar-hide">
+              <div class="text-gray-500 italic text-center py-5 dark:text-gray-400">
+                <i class="fa fa-history mr-2"></i>
+                暂无历史记录
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- 页脚 -->
+  <footer class="bg-gradient-deepseek text-white py-6 dark:bg-gray-900">
+    <div class="container mx-auto px-4">
+      <div class="flex flex-col md:flex-row justify-between items-center">
+        <div class="mb-4 md:mb-0">
+          <div class="flex items-center space-x-2">
+            <i class="fa fa-brain text-white"></i>
+            <span class="font-bold">DeepSeek Pro 客户端</span>
+          </div>
+          <p class="text-gray-300 text-sm mt-1">
+            增强版 - 支持Vision & 128K上下文 & 小说下载 & Word导出
+          </p>
+        </div>
+
+        <div class="flex space-x-6">
+          <a href="#" class="text-gray-300 hover:text-white transition-colors">
+            <i class="fa fa-github text-xl"></i>
+          </a>
+          <a href="#" class="text-gray-300 hover:text-white transition-colors">
+            <i class="fa fa-twitter text-xl"></i>
+          </a>
+          <a href="#" class="text-gray-300 hover:text-white transition-colors">
+            <i class="fa fa-linkedin text-xl"></i>
+          </a>
+        </div>
+      </div>
+
+      <div class="border-t border-white/20 mt-6 pt-6 text-center text-gray-300 text-sm">
+        &copy; 2025 DeepSeek API 客户端. 保留所有权利. | 模型支持: 128K上下文
+      </div>
+    </div>
+  </footer>
+
+  <!-- 加载中模态框 -->
+  <div id="loading-modal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 hidden">
+    <div class="bg-white p-6 rounded-xl shadow-xl max-w-md w-full flex flex-col items-center dark:bg-gray-800">
+      <div class="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary mb-4 dark:border-secondary"></div>
+      <h3 class="font-medium text-lg mb-2 dark:text-white">处理中...</h3>
+      <p class="text-gray-500 text-center dark:text-gray-400" id="loading-message">
+        正在调用 DeepSeek API，请稍候...
+      </p>
+      <div class="mt-4 text-sm text-gray-500 dark:text-gray-400">
+        <i class="fa fa-database mr-1"></i>
+        处理中 <span id="loading-tokens">0</span> tokens
+      </div>
+    </div>
+  </div>
+
+  <!-- 通知组件 -->
+  <div id="notification" class="fixed top-4 right-4 max-w-sm w-full bg-white rounded-lg shadow-xl p-4 transform translate-x-full transition-all duration-300 z-50 flex items-start dark:bg-gray-800 border-l-4 border-primary dark:border-secondary">
+    <div id="notification-icon" class="w-8 h-8 rounded-full flex items-center justify-center mr-3 bg-primary/10 text-primary dark:bg-secondary/10 dark:text-secondary">
+      <i class="fa fa-info-circle"></i>
+    </div>
+    <div class="flex-1">
+      <h4 id="notification-title" class="font-medium text-gray-800 dark:text-white">通知标题</h4>
+      <p id="notification-message" class="text-sm text-gray-600 mt-1 dark:text-gray-300">通知内容将显示在这里...</p>
+    </div>
+    <button id="close-notification" class="ml-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+      <i class="fa fa-times"></i>
+    </button>
+  </div>
+
+  <script>
+    // 全局状态
+    let currentModel = 'deepseek-chat';
+    let currentImage = null;
+    let currentFileName = null;
+    let currentChatId = null;
+    let isScraping = false;
+
+    // DOM 元素
+    const promptTextarea = document.getElementById('prompt');
+    const charCountSpan = document.getElementById('char-count');
+    const tokenCounter = document.getElementById('token-counter');
+    const temperatureSlider = document.getElementById('temperature');
+    const temperatureValueSpan = document.getElementById('temperature-value');
+    const maxTokensSlider = document.getElementById('max-tokens');
+    const maxTokensValueSpan = document.getElementById('max-tokens-value');
+    const modelCards = document.querySelectorAll('.model-card');
+    const visionOptions = document.getElementById('vision-options');
+    const imageUploadInput = document.getElementById('image-upload');
+    const fileUploadInput = document.getElementById('file-upload');
+    const fileNameSpan = document.getElementById('file-name');
+    const imageNameSpan = document.getElementById('image-name');
+    const imagePreview = document.getElementById('image-preview');
+    const previewImage = document.getElementById('preview-image');
+    const removeImageBtn = document.getElementById('remove-image');
+    const clearInputBtn = document.getElementById('clear-input');
+    const sendRequestBtn = document.getElementById('send-request');
+    const chatContainer = document.getElementById('chat-container');
+    const saveTxtBtn = document.getElementById('save-txt');
+    const saveWordBtn = document.getElementById('save-word');
+    const copyResponseBtn = document.getElementById('copy-response');
+    const clearResponseBtn = document.getElementById('clear-response');
+    const responseTokensSpan = document.getElementById('response-tokens span');
+    const responseTimeSpan = document.getElementById('response-time span');
+    const responseModelSpan = document.getElementById('response-model span');
+    const inputTokensSpan = document.getElementById('input-tokens');
+    const tokenProgress = document.getElementById('token-progress');
+    const tokenWarning = document.getElementById('token-warning');
+    const maxInputTokensSpan = document.getElementById('max-input-tokens');
+    const maxOutputTokensSpan = document.getElementById('max-output-tokens');
+    const themeToggleBtn = document.getElementById('theme-toggle');
+    const themeIcon = themeToggleBtn.querySelector('i');
+    const loadingModal = document.getElementById('loading-modal');
+    const loadingMessage = document.getElementById('loading-message');
+    const loadingTokensSpan = document.getElementById('loading-tokens');
+    const notification = document.getElementById('notification');
+    const notificationTitle = document.getElementById('notification-title');
+    const notificationMessage = document.getElementById('notification-message');
+    const notificationIcon = document.getElementById('notification-icon');
+    const closeNotificationBtn = document.getElementById('close-notification');
+    const chatTab = document.getElementById('chat-tab');
+    const novelTab = document.getElementById('novel-tab');
+    const historyTab = document.getElementById('history-tab');
+    const chatContent = document.getElementById('chat-content');
+    const novelContent = document.getElementById('novel-content');
+    const historyContent = document.getElementById('history-content');
+    const historyList = document.getElementById('history-list');
+    const clearAllHistoryBtn = document.getElementById('clear-all-history');
+    const novelUrlInput = document.getElementById('novel-url');
+    const novelFilenameInput = document.getElementById('novel-filename');
+    const browseNovelBtn = document.getElementById('browse-novel');
+    const antiLevelSelect = document.getElementById('anti-level');
+    const scrapeDelayInput = document.getElementById('scrape-delay');
+    const maxChaptersInput = document.getElementById('max-chapters');
+    const startScrapingBtn = document.getElementById('start-scraping');
+    const stopScrapingBtn = document.getElementById('stop-scraping');
+    const scrapeStatusSpan = document.getElementById('scrape-status');
+    const scrapeProgress = document.getElementById('scrape-progress');
+    const chaptersDoneSpan = document.getElementById('chapters-done');
+    const chaptersTotalSpan = document.getElementById('chapters-total');
+    const currentChapterSpan = document.getElementById('current-chapter');
+
+    // 初始化
+    document.addEventListener('DOMContentLoaded', () => {
+      initModelSelection();
+      updateCharCount();
+      updateSliders();
+      checkDarkMode();
+      setupEventListeners();
+      updateTokenStats();
+      loadChatHistory();
+
+      // 设置默认标签页
+      showTab('chat');
+    });
+
+    function initModelSelection() {
+      // 激活默认模型
+      activateModelCard(currentModel);
+
+      // 更新模型token显示
+      maxInputTokensSpan.textContent = `128,000 tokens`;
+      maxOutputTokensSpan.textContent = "4096 tokens";
+    }
+
+    function activateModelCard(model) {
+      modelCards.forEach(card => {
+        card.classList.remove('active');
+        if (card.dataset.model === model) {
+          card.classList.add('active');
+        }
+      });
+
+      // 显示/隐藏Vision选项
+      visionOptions.classList.toggle('hidden', model !== 'deepseek-vision');
+    }
+
+    function setupEventListeners() {
+      // 模型选择
+      modelCards.forEach(card => {
+        card.addEventListener('click', () => {
+          currentModel = card.dataset.model;
+          activateModelCard(currentModel);
+          updateTokenStats();
+        });
+      });
+
+      // 滑块事件
+      temperatureSlider.addEventListener('input', () => {
+        temperatureValueSpan.textContent = temperatureSlider.value;
+      });
+
+      maxTokensSlider.addEventListener('input', () => {
+        maxTokensValueSpan.textContent = maxTokensSlider.value;
+      });
+
+      // 输入事件
+      promptTextarea.addEventListener('input', () => {
+        updateCharCount();
+        estimateTokens();
+      });
+
+      // 文件上传
+      fileUploadInput.addEventListener('change', handleFileUpload);
+      imageUploadInput.addEventListener('change', handleImageUpload);
+      removeImageBtn.addEventListener('click', removeImage);
+
+      // 按钮事件
+      clearInputBtn.addEventListener('click', clearInput);
+      sendRequestBtn.addEventListener('click', sendRequest);
+      saveTxtBtn.addEventListener('click', saveAsTxt);
+      saveWordBtn.addEventListener('click', saveAsWord);
+      copyResponseBtn.addEventListener('click', copyResponse);
+      clearResponseBtn.addEventListener('click', clearResponse);
+      closeNotificationBtn.addEventListener('click', closeNotification);
+      themeToggleBtn.addEventListener('click', toggleTheme);
+
+      // 标签页切换
+      chatTab.addEventListener('click', () => showTab('chat'));
+      novelTab.addEventListener('click', () => showTab('novel'));
+      historyTab.addEventListener('click', () => showTab('history'));
+
+      // 小说下载功能
+      browseNovelBtn.addEventListener('click', browseNovelFile);
+      startScrapingBtn.addEventListener('click', startScraping);
+      stopScrapingBtn.addEventListener('click', stopScraping);
+
+      // 历史记录
+      clearAllHistoryBtn.addEventListener('click', clearAllHistory);
+    }
+
+    function showTab(tabName) {
+      // 更新标签按钮状态
+      chatTab.classList.remove('active', 'inactive');
+      novelTab.classList.remove('active', 'inactive');
+      historyTab.classList.remove('active', 'inactive');
+
+      chatTab.classList.add(tabName === 'chat' ? 'active' : 'inactive');
+      novelTab.classList.add(tabName === 'novel' ? 'active' : 'inactive');
+      historyTab.classList.add(tabName === 'history' ? 'active' : 'inactive');
+
+      // 显示/隐藏内容区
+      chatContent.classList.toggle('hidden', tabName !== 'chat');
+      novelContent.classList.toggle('hidden', tabName !== 'novel');
+      historyContent.classList.toggle('hidden', tabName !== 'history');
+
+      // 如果是历史记录标签，刷新列表
+      if (tabName === 'history') {
+        loadChatHistory();
+      }
+    }
+
+    function updateCharCount() {
+      charCountSpan.textContent = promptTextarea.value.length;
+    }
+
+    function updateSliders() {
+      temperatureValueSpan.textContent = temperatureSlider.value;
+      maxTokensValueSpan.textContent = maxTokensSlider.value;
+    }
+
+    function checkDarkMode() {
+      if (localStorage.getItem('darkMode') === 'true' ||
+          (window.matchMedia('(prefers-color-scheme: dark)').matches && !localStorage.getItem('darkMode'))) {
+        enableDarkMode();
+      }
+    }
+
+    function handleFileUpload(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      if (!file.name.endsWith('.txt')) {
+        showNotification('文件类型错误', '请选择TXT格式的文件', 'error');
+        return;
+      }
+
+      if (file.size > 5 * 1024 * 1024) {
+        showNotification('文件过大', '请选择小于5MB的TXT文件', 'error');
+        return;
+      }
+
+      currentFileName = file.name;
+      fileNameSpan.textContent = file.name;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        promptTextarea.value = event.target.result;
+        updateCharCount();
+        estimateTokens();
+        showNotification('文件导入成功', `已成功导入文件: ${file.name}`, 'success');
+      };
+      reader.readAsText(file);
+    }
+
+    function handleImageUpload(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      if (!file.type.match('image.*')) {
+        showNotification('文件类型错误', '请选择图片文件', 'error');
+        return;
+      }
+
+      if (file.size > 5 * 1024 * 1024) {
+        showNotification('图片过大', '请选择小于5MB的图片', 'error');
+        return;
+      }
+
+      imageNameSpan.textContent = file.name;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        previewImage.src = event.target.result;
+        imagePreview.classList.remove('hidden');
+        currentImage = event.target.result;
+        estimateTokens();
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function removeImage() {
+      imagePreview.classList.add('hidden');
+      currentImage = null;
+      imageNameSpan.textContent = '未选择图片';
+      imageUploadInput.value = '';
+      estimateTokens();
+    }
+
+    function clearInput() {
+      promptTextarea.value = '';
+      updateCharCount();
+      estimateTokens();
+      currentFileName = null;
+      fileNameSpan.textContent = '未选择文档';
+      fileUploadInput.value = '';
+      removeImage();
+    }
+
+    function estimateTokens() {
+      const text = promptTextarea.value;
+      let tokenCount = 0;
+
+      // 中文字符：1 token/字符
+      // 英文字符：1 token/3-4字符
+      const chineseChars = text.match(/[\u4e00-\u9fa5]/g) || [];
+      const englishChars = text.replace(/[\u4e00-\u9fa5]/g, '').length;
+
+      tokenCount = chineseChars.length + Math.ceil(englishChars / 3.5);
+
+      // 如果上传了图片，添加图像Token估算
+      if (currentImage && currentModel === 'deepseek-vision') {
+        tokenCount += 300; // 保守估计图像token
+      }
+
+      tokenCounter.textContent = `${tokenCount.toLocaleString()} tokens`;
+      inputTokensSpan.textContent = `${tokenCount.toLocaleString()} tokens`;
+
+      // 更新进度条
+      const maxTokens = 128000; // 128K tokens
+      const progress = Math.min(100, (tokenCount / maxTokens) * 100);
+      tokenProgress.style.width = `${progress}%`;
+
+      // 更新进度条颜色
+      if (progress > 90) {
+        tokenProgress.classList.remove('bg-green-500', 'bg-yellow-500');
+        tokenProgress.classList.add('bg-red-500');
+        tokenWarning.classList.remove('hidden');
+        tokenWarning.classList.add('token-danger');
+      } else if (progress > 70) {
+        tokenProgress.classList.remove('bg-green-500', 'bg-red-500');
+        tokenProgress.classList.add('bg-yellow-500');
+        tokenWarning.classList.remove('hidden');
+        tokenWarning.classList.add('token-warning');
+      } else {
+        tokenProgress.classList.remove('bg-yellow-500', 'bg-red-500');
+        tokenProgress.classList.add('bg-green-500');
+        tokenWarning.classList.add('hidden');
+      }
+
+      return tokenCount;
+    }
+
+    function updateTokenStats() {
+      maxInputTokensSpan.textContent = `128,000 tokens`;
+      estimateTokens();
+    }
+
+    async function sendRequest() {
+      const prompt = promptTextarea.value.trim();
+      const temperature = parseFloat(temperatureSlider.value);
+      const maxTokens = parseInt(maxTokensSlider.value);
+      const model = currentModel;
+
+      // 验证输入
+      if (!prompt && !currentImage) {
+        showNotification('缺少输入', '请输入文本或上传图片', 'error');
+        return;
+      }
+
+      // 估算token
+      const estimatedTokens = estimateTokens();
+
+      // 检查token限制
+      if (estimatedTokens > 128000 * 0.9) {
+        if (!confirm(`您的输入估计有 ${estimatedTokens.toLocaleString()} tokens，接近模型限制（128,000 tokens）。继续发送可能会被截断。确定要继续吗？`)) {
+          return;
+        }
+      }
+
+      // 显示加载中
+      loadingMessage.textContent = "正在调用 DeepSeek API，请稍候...";
+      loadingTokensSpan.textContent = estimatedTokens.toLocaleString();
+      loadingModal.classList.remove('hidden');
+
+      // 记录开始时间
+      const startTime = performance.now();
+
+      try {
+        // 构建请求体
+        const body = {
+          prompt: prompt,
+          model: model,
+          temperature: temperature,
+          max_tokens: maxTokens,
+          chat_id: currentChatId || undefined
+        };
+
+        // 如果有图片，添加到请求体
+        if (currentImage && model === 'deepseek-vision') {
+          body.image = currentImage.split(',')[1]; // 提取Base64数据
+          body.image_detail = document.getElementById('image-detail').value;
+          body.image_task = document.getElementById('image-task').value;
+        }
+
+        // 发送请求到后端API
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body)
+        });
+
+        // 隐藏加载中
+        loadingModal.classList.add('hidden');
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || `API请求失败 (状态码: ${response.status})`);
+        }
+
+        // 计算响应时间
+        const endTime = performance.now();
+        const responseTime = ((endTime - startTime) / 1000).toFixed(2);
+
+        const data = await response.json();
+
+        if (!data.response) {
+          throw new Error('API返回格式异常，未找到响应内容');
+        }
+
+        // 更新当前聊天ID
+        currentChatId = data.chat_id;
+
+        // 显示响应
+        displayResponse(data.response, data.tokens_used || (data.response.length / 4), responseTime, model);
+
+        showNotification('请求成功', '已成功获取API响应', 'success');
+      } catch (error) {
+        console.error('API请求错误:', error);
+        loadingModal.classList.add('hidden');
+        showNotification('请求失败', error.message || '发生未知错误', 'error');
+      }
+    }
+
+    function displayResponse(responseText, tokensUsed, responseTime, model) {
+      // 如果没有聊天ID，创建一个新的聊天容器
+      if (!currentChatId) {
+        currentChatId = `chat-${Date.now()}`;
+        chatContainer.innerHTML = '';
+      }
+
+      // 添加用户消息
+      const userMessageDiv = document.createElement('div');
+      userMessageDiv.className = 'chat-message-user';
+      userMessageDiv.innerHTML = `
+        <div class="flex items-start">
+          <div class="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center mr-3 dark:bg-blue-900/30">
+            <i class="fa fa-user text-blue-500 dark:text-blue-300"></i>
+          </div>
+          <div class="flex-1">
+            <div class="font-medium text-gray-800 dark:text-gray-200 mb-1">你</div>
+            <div class="prose max-w-none dark:prose-invert">${formatMessage(promptTextarea.value)}</div>
+          </div>
+        </div>
+      `;
+      chatContainer.appendChild(userMessageDiv);
+
+      // 添加AI响应
+      const aiMessageDiv = document.createElement('div');
+      aiMessageDiv.className = 'chat-message-assistant';
+      aiMessageDiv.innerHTML = `
+        <div class="flex items-start">
+          <div class="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center mr-3 dark:bg-green-900/30">
+            <i class="fa fa-robot text-green-500 dark:text-green-300"></i>
+          </div>
+          <div class="flex-1">
+            <div class="font-medium text-gray-800 dark:text-gray-200 mb-1">DeepSeek</div>
+            <div class="prose max-w-none dark:prose-invert">${formatMessage(responseText)}</div>
+          </div>
+        </div>
+      `;
+      chatContainer.appendChild(aiMessageDiv);
+
+      // 滚动到底部
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+
+      // 清空输入框
+      promptTextarea.value = '';
+      updateCharCount();
+      estimateTokens();
+
+      // 显示统计信息
+      responseTokensSpan.textContent = tokensUsed;
+      responseTimeSpan.textContent = responseTime;
+      responseModelSpan.textContent = model;
+    }
+
+    function formatMessage(text) {
+      // 使用marked.js将Markdown转换为HTML
+      return marked.parse(text);
+    }
+
+    function saveAsTxt() {
+      const messages = chatContainer.querySelectorAll('.chat-message-user, .chat-message-assistant');
+      if (!messages || messages.length === 0) {
+        showNotification('保存失败', '没有可保存的对话内容', 'error');
+        return;
+      }
+
+      let content = '';
+      messages.forEach(msg => {
+        const role = msg.classList.contains('chat-message-user') ? '用户' : 'DeepSeek';
+        const text = msg.querySelector('.prose').textContent;
+        content += `${role}:\n${text}\n\n`;
+      });
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = currentFileName
+        ? `conversation_${currentFileName.replace('.txt', '')}_${timestamp}.txt`
+        : `deepseek_conversation_${timestamp}.txt`;
+
+      const blob = new Blob([content], { type: 'text/plain' });
+      saveAs(blob, filename);
+
+      showNotification('保存成功', `对话已保存为 ${filename}`, 'success');
+    }
+
+    function saveAsWord() {
+      const messages = chatContainer.querySelectorAll('.chat-message-user, .chat-message-assistant');
+      if (!messages || messages.length === 0) {
+        showNotification('保存失败', '没有可保存的对话内容', 'error');
+        return;
+      }
+
+      const { Document, Paragraph, TextRun } = docx;
+
+      // 创建文档
+      const doc = new Document({
+        sections: [{
+          properties: {},
+          children: [
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: "DeepSeek 对话记录",
+                  bold: true,
+                  size: 28,
+                })
+              ]
+            }),
+            new Paragraph({
+              text: `生成时间: ${new Date().toLocaleString()}`,
+              spacing: { after: 200 }
+            }),
+            ...Array.from(messages).flatMap(msg => {
+              const role = msg.classList.contains('chat-message-user') ? '用户' : 'DeepSeek';
+              const text = msg.querySelector('.prose').textContent;
+
+              return [
+                new Paragraph({
+                  text: role,
+                  bold: true,
+                  spacing: { before: 200 }
+                }),
+                new Paragraph({
+                  text: text,
+                  spacing: { line: 300 }
+                })
+              ];
+            })
+          ]
+        }]
+      });
+
+      // 保存文档
+      docx.Packer.toBlob(doc).then(blob => {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const filename = currentFileName
+          ? `conversation_${currentFileName.replace('.txt', '')}_${timestamp}.docx`
+          : `deepseek_conversation_${timestamp}.docx`;
+
+        saveAs(blob, filename);
+        showNotification('保存成功', `对话已保存为Word文档`, 'success');
+      });
+    }
+
+    function copyResponse() {
+      const messages = chatContainer.querySelectorAll('.chat-message-assistant');
+      if (!messages || messages.length === 0) {
+        showNotification('复制失败', '没有可复制的响应内容', 'error');
+        return;
+      }
+
+      let content = '';
+      messages.forEach(msg => {
+        content += msg.querySelector('.prose').textContent + '\n\n';
+      });
+
+      navigator.clipboard.writeText(content.trim())
+        .then(() => {
+          showNotification('复制成功', '响应内容已复制到剪贴板', 'success');
+        })
+        .catch(err => {
+          showNotification('复制失败', '无法访问剪贴板', 'error');
+          console.error('复制失败:', err);
+        });
+    }
+
+    function clearResponse() {
+      chatContainer.innerHTML = `
+        <div class="text-gray-500 text-center py-16 dark:text-gray-400">
+          <i class="fa fa-comment-o text-4xl mb-3 opacity-50"></i>
+          <div class="text-lg">对话将显示在这里</div>
+          <p class="text-sm mt-2">输入内容并点击"发送请求"按钮开始对话</p>
+        </div>
+      `;
+      currentChatId = null;
+    }
+
+    function loadChatHistory() {
+      fetch('/api/history')
+        .then(response => response.json())
+        .then(chats => {
+          if (chats.length === 0) {
+            historyList.innerHTML = `
+              <div class="text-gray-500 italic text-center py-5 dark:text-gray-400">
+                <i class="fa fa-history mr-2"></i>
+                暂无历史记录
+              </div>
+            `;
+            return;
+          }
+
+          historyList.innerHTML = chats.map(chat => `
+            <div class="history-item p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-700/50" data-chat-id="${chat.id}">
+              <div class="flex justify-between items-start">
+                <div class="flex-1">
+                  <h4 class="font-medium text-gray-800 dark:text-gray-200 truncate">${chat.title}</h4>
+                  <p class="text-sm text-gray-500 dark:text-gray-400 mt-1 truncate">${chat.preview}</p>
+                </div>
+                <div class="ml-3 text-xs text-gray-500 dark:text-gray-400">
+                  ${new Date(chat.created_at).toLocaleDateString()}
+                </div>
+              </div>
+              <div class="flex items-center mt-2 text-xs text-gray-500 dark:text-gray-400">
+                <span class="bg-blue-100 text-blue-800 px-2 py-1 rounded-full dark:bg-blue-900/30 dark:text-blue-300">
+                  ${chat.model}
+                </span>
+              </div>
+            </div>
+          `).join('');
+
+          // 添加点击事件
+          document.querySelectorAll('.history-item').forEach(item => {
+            item.addEventListener('click', () => {
+              const chatId = item.dataset.chatId;
+              loadChat(chatId);
+              showTab('chat');
+            });
+          });
+        })
+        .catch(error => {
+          console.error('加载历史记录失败:', error);
+          showNotification('错误', '加载历史记录失败', 'error');
+        });
+    }
+
+    function loadChat(chatId) {
+      fetch(`/api/history/${chatId}`)
+        .then(response => response.json())
+        .then(messages => {
+          currentChatId = chatId;
+          chatContainer.innerHTML = '';
+
+          messages.forEach(msg => {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = msg.role === 'user' ? 'chat-message-user' : 'chat-message-assistant';
+            messageDiv.innerHTML = `
+              <div class="flex items-start">
+                <div class="w-8 h-8 rounded-full ${msg.role === 'user' ? 'bg-blue-100 dark:bg-blue-900/30' : 'bg-green-100 dark:bg-green-900/30'} flex items-center justify-center mr-3">
+                  <i class="fa ${msg.role === 'user' ? 'fa-user text-blue-500 dark:text-blue-300' : 'fa-robot text-green-500 dark:text-green-300'}"></i>
+                </div>
+                <div class="flex-1">
+                  <div class="font-medium text-gray-800 dark:text-gray-200 mb-1">${msg.role === 'user' ? '你' : 'DeepSeek'}</div>
+                  <div class="prose max-w-none dark:prose-invert">${formatMessage(msg.content)}</div>
+                </div>
+              </div>
+            `;
+            chatContainer.appendChild(messageDiv);
+          });
+
+          // 滚动到底部
+          chatContainer.scrollTop = chatContainer.scrollHeight;
+        })
+        .catch(error => {
+          console.error('加载聊天失败:', error);
+          showNotification('错误', '加载聊天失败', 'error');
+        });
+    }
+
+    function clearAllHistory() {
+      if (confirm('确定要清空所有历史记录吗？此操作不可撤销。')) {
+        fetch('/api/history', {
+          method: 'DELETE'
+        })
+          .then(response => {
+            if (response.ok) {
+              showNotification('成功', '所有历史记录已清空', 'success');
+              loadChatHistory();
+            } else {
+              throw new Error('清空历史记录失败');
+            }
+          })
+          .catch(error => {
+            console.error('清空历史记录失败:', error);
+            showNotification('错误', '清空历史记录失败', 'error');
+          });
+      }
+    }
+
+    function browseNovelFile() {
+      // 模拟文件选择对话框
+      const filename = prompt('请输入保存文件名:', 'novel.txt');
+      if (filename) {
+        novelFilenameInput.value = filename;
+      }
+    }
+
+    function startScraping() {
+      const url = novelUrlInput.value.trim();
+      const filename = novelFilenameInput.value.trim();
+      const maxChapters = parseInt(maxChaptersInput.value);
+      const delay = parseFloat(scrapeDelayInput.value);
+
+      if (!url) {
+        showNotification('错误', '请输入小说起始URL', 'error');
+        return;
+      }
+
+      if (!filename) {
+        showNotification('错误', '请输入保存文件名', 'error');
+        return;
+      }
+
+      if (isNaN(maxChapters) || maxChapters < 1 || maxChapters > 500) {
+        showNotification('错误', '请输入有效的章节数 (1-500)', 'error');
+        return;
+      }
+
+      if (isNaN(delay) || delay < 0.5 || delay > 5) {
+        showNotification('错误', '请输入有效的延迟时间 (0.5-5秒)', 'error');
+        return;
+      }
+
+      isScraping = true;
+      startScrapingBtn.disabled = true;
+      stopScrapingBtn.disabled = false;
+      scrapeStatusSpan.textContent = '正在连接...';
+      chaptersTotalSpan.textContent = maxChapters;
+      chaptersDoneSpan.textContent = '0';
+      scrapeProgress.style.width = '0%';
+
+      // 模拟进度更新
+      let progress = 0;
+      const progressInterval = setInterval(() => {
+        if (!isScraping) {
+          clearInterval(progressInterval);
+          return;
+        }
+
+        progress += Math.random() * 5;
+        if (progress >= 100) {
+          progress = 100;
+          clearInterval(progressInterval);
+          isScraping = false;
+          startScrapingBtn.disabled = false;
+          stopScrapingBtn.disabled = true;
+          scrapeStatusSpan.textContent = '下载完成!';
+          showNotification('成功', '小说下载完成', 'success');
+        }
+
+        scrapeProgress.style.width = `${progress}%`;
+        chaptersDoneSpan.textContent = Math.floor(progress / 100 * maxChapters);
+      }, 1000);
+
+      // 模拟章节更新
+      const chapterInterval = setInterval(() => {
+        if (!isScraping) {
+          clearInterval(chapterInterval);
+          return;
+        }
+
+        const chapters = ['第一章 初遇', '第二章 成长', '第三章 挑战', '第四章 突破', '第五章 结局'];
+        currentChapterSpan.textContent = chapters[Math.floor(Math.random() * chapters.length)];
+      }, 3000);
+
+      // 在实际应用中，这里应该调用后端API开始爬取
+      fetch('/api/scrape', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          url: url,
+          filename: filename,
+          max_chapters: maxChapters,
+          delay: delay
+        })
+      })
+        .then(response => response.json())
+        .then(data => {
+          clearInterval(progressInterval);
+          clearInterval(chapterInterval);
+          isScraping = false;
+          startScrapingBtn.disabled = false;
+          stopScrapingBtn.disabled = true;
+
+          if (data.status === 'completed') {
+            scrapeStatusSpan.textContent = '下载完成!';
+            scrapeProgress.style.width = '100%';
+            chaptersDoneSpan.textContent = maxChapters;
+            currentChapterSpan.textContent = '无';
+            showNotification('成功', `小说已保存到 ${data.filename}`, 'success');
+          } else {
+            scrapeStatusSpan.textContent = '下载失败';
+            showNotification('错误', data.message || '小说下载失败', 'error');
+          }
+        })
+
+              // 修改 startScraping 函数
+function startScraping() {
+    // ... 其他代码不变 ...
+
+    // 发送请求后开始检查状态
+    fetch('/api/scrape', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            url: url,
+            filename: filename,
+            max_chapters: maxChapters,
+            delay: delay
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'started') {
+            // 开始状态检查
+            setTimeout(checkScraperStatus, 1000);
+        } else if (data.status === 'error' && data.message === 'Scraper is already running') {
+            // 处理爬虫已在运行的情况
+            isScraping = false;
+            startScrapingBtn.disabled = false;
+            stopScrapingBtn.disabled = true;
+            scrapeStatusSpan.textContent = '爬虫已在运行中';
+            showNotification('警告', '爬虫任务已在运行，请等待完成或停止当前任务', 'warning');
+        }
+    })
+        .catch(error => {
+          console.error('下载失败:', error);
+          clearInterval(progressInterval);
+          clearInterval(chapterInterval);
+          isScraping = false;
+          startScrapingBtn.disabled = false;
+          stopScrapingBtn.disabled = true;
+          scrapeStatusSpan.textContent = '下载失败';
+          showNotification('错误', '小说下载失败', 'error');
+        });
+    }
+
+function stopScraping() {
+    isScraping = false;
+    startScrapingBtn.disabled = false;
+    stopScrapingBtn.disabled = true;
+    scrapeStatusSpan.textContent = '正在停止...';
+
+    // 调用后端停止API
+    fetch('/api/scrape/stop', {
+        method: 'POST'
+    })
+    .then(() => {
+        showNotification('信息', '已发送停止请求', 'info');
+    });
+}
+
+    function showNotification(title, message, type = 'info') {
+      notificationTitle.textContent = title;
+      notificationMessage.textContent = message;
+
+      const iconClass = {
+        info: 'fa-info-circle',
+        success: 'fa-check-circle',
+        error: 'fa-exclamation-circle',
+        warning: 'fa-exclamation-triangle'
+      };
+
+      const bgClass = {
+        info: 'bg-primary/10 text-primary dark:bg-secondary/10 dark:text-secondary',
+        success: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
+        error: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
+        warning: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300'
+      };
+
+      notificationIcon.className = `w-8 h-8 rounded-full flex items-center justify-center mr-3 ${bgClass[type]}`;
+      notificationIcon.innerHTML = `<i class="fa ${iconClass[type]}"></i>`;
+
+      notification.classList.remove('translate-x-full');
+
+      setTimeout(() => {
+        notification.classList.add('translate-x-full');
+      }, 3000);
+    }
+
+    function closeNotification() {
+      notification.classList.add('translate-x-full');
+    }
+
+    function toggleTheme() {
+      if (document.documentElement.classList.contains('dark')) {
+        disableDarkMode();
+      } else {
+        enableDarkMode();
+      }
+    }
+
+    function enableDarkMode() {
+      document.documentElement.classList.add('dark');
+      themeIcon.className = 'fa fa-sun-o text-yellow-400';
+      localStorage.setItem('darkMode', 'true');
+    }
+
+    function disableDarkMode() {
+      document.documentElement.classList.remove('dark');
+      themeIcon.className = 'fa fa-moon-o text-gray-600';
+      localStorage.setItem('darkMode', 'false');
+    }
+
+    // 添加定期检查爬虫状态的函数
+function checkScraperStatus() {
+    if (!isScraping) return;
+
+    fetch('/api/scrape/status')
+        .then(response => response.json())
+        .then(status => {
+            if (status.is_scraping) {
+                // 更新进度
+                scrapeProgress.style.width = `${status.progress}%`;
+                chaptersDoneSpan.textContent = Math.floor(status.progress / 100 * maxChaptersInput.value);
+                scrapeStatusSpan.textContent = status.status;
+                currentChapterSpan.textContent = status.status.includes('Downloading') ?
+                    status.status.split('Downloading: ')[1] : '处理中...';
+
+                // 继续检查
+                setTimeout(checkScraperStatus, 2000);
+            } else {
+                // 爬虫完成
+                isScraping = false;
+                startScrapingBtn.disabled = false;
+                stopScrapingBtn.disabled = true;
+
+                if (status.last_result && status.last_result.status === 'completed') {
+                    scrapeStatusSpan.textContent = '下载完成!';
+                    showNotification('成功', `小说已保存到 ${status.last_result.filename}`, 'success');
+                } else {
+                    scrapeStatusSpan.textContent = '下载失败';
+                    showNotification('错误', status.last_result?.message || '小说下载失败', 'error');
+                }
+            }
+        });
+}}
+
+  </script>
+</body>
+</html>

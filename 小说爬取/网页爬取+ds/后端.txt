@@ -1,0 +1,16 @@
+import os
+
+# 基础配置
+DEBUG = True
+SECRET_KEY = 'your-secret-key-here'
+
+# 文件上传配置
+UPLOAD_FOLDER = 'D:\\novels'  # Windows 路径用双反斜杠
+ALLOWED_EXTENSIONS = {'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif'}
+
+# DeepSeek API 配置 (实际应用中应该从环境变量获取)
+DEEPSEEK_API_KEY = 'sk-9dd433f61d0b4273b1389892661f5d7c'
+DEEPSEEK_API_URL = 'https://api.deepseek.com/v1/chat/completions'
+
+# 数据库配置
+DATABASE = 'database.db'

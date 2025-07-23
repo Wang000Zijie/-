@@ -1,0 +1,595 @@
+import requests
+from bs4 import BeautifulSoup
+import os
+import re
+import time
+import random
+import json
+from urllib.parse import urljoin, urlparse
+import cloudscraper
+from threading import Thread
+
+
+class NovelScraper:
+    def __init__(self):
+        self.scraper = cloudscraper.create_scraper()
+        self.is_scraping = False
+        self.stop_requested = False
+        self.current_progress = 0
+        self.current_status = "Ready"
+        self.last_result = None
+
+    def start_scraping(self, url, filename, max_chapters=50, delay=1.5):
+        if self.is_scraping:
+            return {'status': 'error', 'message': 'Scraper is already running'}
+
+        self.is_scraping = True
+        self.stop_requested = False
+        self.current_progress = 0
+        self.current_status = "Starting..."
+
+        # 在新线程中运行爬虫
+        thread = Thread(target=self._scrape_novel, args=(url, filename, max_chapters, delay))
+        thread.start()
+
+        return {'status': 'started', 'message': 'Scraping started in background'}
+
+    def _scrape_novel(self, url, filename, max_chapters, delay):
+        try:
+            self.current_status = f"Connecting to {urlparse(url).netloc}"
+
+            # 准备文件
+            os.makedirs(os.path.dirname(filename) or '.', exist_ok=True)
+
+            with open(filename, 'w', encoding='utf-8') as f:
+                current_url = url
+                chapter_count = 0
+                visited_urls = set()
+                novel_title = "Novel"
+
+                # 获取第一页
+                soup = self._get_page(current_url, delay)
+                if soup:
+                    novel_title = self._extract_title(soup)
+                    f.write(f"《{novel_title}》\n\n")
+                    self.current_status = f"Found novel: {novel_title}"
+                else:
+                    self.current_status = "Warning: Could not get first page"
+                    f.write(f"《{novel_title}》\n\n")
+
+                # 下载循环
+                while current_url and not self.stop_requested and chapter_count < max_chapters:
+                    if current_url in visited_urls:
+                        self.current_status = f"Detected loop at: {current_url}"
+                        break
+
+                    visited_urls.add(current_url)
+
+                    # 获取页面
+                    soup = self._get_page(current_url, delay)
+                    if not soup:
+                        self.current_status = f"Failed to get page: {current_url}"
+                        # 尝试重新获取一次
+                        self.current_status = f"Retrying page: {current_url}"
+                        soup = self._get_page(current_url, delay * 1.5)
+                        if not soup:
+                            self.current_status = f"Retry failed, skipping chapter: {current_url}"
+                            chapter_count += 1
+                            self.current_progress = min(100, chapter_count / max_chapters * 100)
+                            continue
+
+                    # 提取内容
+                    title = self._extract_title(soup)
+                    self.current_status = f"Downloading: {title} ({chapter_count + 1}/{max_chapters})"
+
+                    content_div = self._extract_novel_content(soup)
+                    if content_div is not None:
+                        try:
+                            # 获取并清理文本
+                            raw_text = content_div.get_text()
+                            clean_text = self._clean_novel_text(raw_text)
+
+                            # 写入文件
+                            f.write(f"【{title}】\n\n")
+                            f.write(clean_text)
+                            f.write("\n\n")
+                        except Exception as e:
+                            self.current_status = f"Error processing content: {str(e)}"
+                            f.write(f"【{title}】\n\n")
+                            f.write("（Content processing error）\n\n")
+                    else:
+                        self.current_status = "Warning: No content area found"
+                        f.write(f"【{title}】\n\n\n")
+
+                    chapter_count += 1
+                    self.current_progress = min(100, chapter_count / max_chapters * 100)
+
+                    # 查找下一页
+                    next_url = self._extract_next_page(soup, current_url)
+                    if not next_url:
+                        self.current_status = "No next page found, scraping completed"
+                        break
+
+                    if next_url == current_url:
+                        self.current_status = "Next page same as current, scraping completed"
+                        break
+
+                    current_url = next_url
+
+                # 完成处理
+                if self.stop_requested:
+                    self.current_status = f"Scraping stopped, downloaded {chapter_count} chapters"
+                else:
+                    self.current_status = f"Scraping completed! Downloaded {chapter_count} chapters"
+
+                self.last_result = {
+                    'status': 'completed',
+                    'filename': os.path.abspath(filename),
+                    'chapters': chapter_count,
+                    'novel_title': novel_title
+                }
+
+        except Exception as e:
+            self.last_result = {
+                'status': 'error',
+                'message': str(e)
+            }
+        finally:
+            self.is_scraping = False
+
+    def stop_scraping(self):
+        self.stop_requested = True
+        self.current_status = "Stopping..."
+
+    def get_status(self):
+        return {
+            'is_scraping': self.is_scraping,
+            'progress': self.current_progress,
+            'status': self.current_status,
+            'last_result': self.last_result
+        }
+
+    # 以下是爬虫的辅助方法 (与原始代码类似，略作修改)
+    def _get_page(self, url, delay=1.5):
+        """获取页面内容，绕过反爬机制"""
+        try:
+            # 随机延迟
+            sleep_time = delay * random.uniform(0.8, 1.2)
+            time.sleep(sleep_time)
+
+            # 生成动态请求头
+            headers = {
+                'User-Agent': random.choice([
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.0.0 Safari/537.36",
+                    "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.0.0 Safari/537.36",
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 12_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:106.0) Gecko/20100101 Firefox/106.0"
+                ]),
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                'Referer': 'https://www.google.com/',
+                'DNT': '1',
+                'Connection': 'keep-alive'
+            }
+
+            # 使用CloudScraper获取页面
+            self.current_status = f"Fetching page: {url} [delay: {sleep_time:.2f}s]"
+            response = self.scraper.get(url, headers=headers, timeout=30)
+
+            # 处理编码
+            if 'charset' in response.headers.get('content-type', '').lower():
+                encoding = re.search(r'charset=([\w-]+)', response.headers['content-type']).group(1)
+            else:
+                # 尝试从HTML中检测编码
+                encoding_match = re.search(r'<meta.*?charset=["\']?([\w-]+)', response.text[:2000], re.I)
+                encoding = encoding_match.group(1) if encoding_match else 'gbk'
+
+            try:
+                response.encoding = encoding
+                return BeautifulSoup(response.text, 'html.parser')
+            except:
+                # 如果编码失败，尝试手动解码
+                try:
+                    return BeautifulSoup(response.content.decode(encoding, errors='replace'), 'html.parser')
+                except:
+                    return BeautifulSoup(response.text, 'html.parser')
+
+        except Exception as e:
+            self.current_status = f"Failed to get page: {str(e)}"
+            return None
+
+    def _extract_novel_content(self, soup):
+        """专业级小说内容提取器 - 增强版"""
+        if soup is None:
+            self.current_status = "Warning: soup object is None, cannot extract content"
+            return None
+
+        try:
+            # 先移除已知广告区域
+            ad_selectors = [
+                'div.ad', 'div.ads', 'div.ad-container', 'div.vip', 'div.pagination',
+                'div.tags', 'div.related', 'div.comments', 'footer', 'header', 'nav',
+                'div.share', 'div.author', 'div.breadcrumb', 'div.recommend', 'div.hot',
+                'div.prev-next', 'div.page-nav', 'div.chapter-nav', 'div.chapter-list',
+                'div.post-tags', 'div.entry-meta', 'div.entry-footer', 'div.entry-header',
+                'div.sidebar', 'div.widget', 'div.promo', 'div.banner', 'div.sponsor'
+            ]
+
+            for selector in ad_selectors:
+                for ad in soup.select(selector):
+                    if ad is None:
+                        continue
+                    try:
+                        ad.decompose()
+                    except Exception as e:
+                        continue
+
+            # 策略1: 尝试已知内容选择器（优先级更高）
+            content_selectors = [
+                'div.article-content',
+                'div#content',
+                'div.content',
+                'div.text',
+                'div.read-content',
+                'div.novel-content',
+                'div.chapter-content',
+                'div.entry-content',
+                'div.post-content',
+                'div.main-content',
+                'div.article-body',
+                'div.story-content',
+                'div.chapter-text'
+            ]
+
+            for selector in content_selectors:
+                content_div = soup.select_one(selector)
+                if content_div:
+                    self.current_status = f"Using selector: {selector}"
+                    # 移除内容区域内的广告元素
+                    for ad in content_div.find_all(['div', 'a', 'span', 'p', 'img']):
+                        if ad is None:
+                            continue
+                        try:
+                            classes = ad.get('class', [])
+                            if isinstance(classes, str):
+                                classes = [classes]
+                            ad_id = ad.get('id', '')
+                            ad_text = ad.get_text()
+
+                            # 检查广告特征
+                            ad_keywords = ['ad', 'vip', 'banner', 'promo', 'register', 'download', 'click', 'free']
+                            if any(kw in ' '.join(classes).lower() for kw in ad_keywords) or \
+                                    any(kw in ad_id.lower() for kw in ad_keywords) or \
+                                    any(kw in ad_text.lower() for kw in ad_keywords):
+                                ad.decompose()
+                        except:
+                            continue
+                    return content_div
+
+            # 策略2: 智能内容探测（增强版）
+            self.current_status = "Intelligent content detection..."
+            all_divs = soup.find_all(['div', 'article', 'section'])
+            candidate = None
+            max_text_score = 0
+
+            for element in all_divs:
+                # 跳过已知广告容器
+                if element is None:
+                    continue
+                elem_class = element.get('class', [])
+                elem_id = element.get('id', '')
+                ad_keywords = ['ad', 'vip', 'banner', 'promo', 'footer', 'header', 'sidebar', 'nav',
+                               'pagination', 'tags', 'related', 'comments', 'share', 'author', 'breadcrumb',
+                               'recommend', 'hot', 'prev-next', 'page-nav', 'chapter-nav', 'chapter-list',
+                               'post-tags', 'entry-meta', 'entry-footer', 'entry-header', 'widget', 'sponsor']
+                if any(kw in ' '.join(elem_class).lower() for kw in ad_keywords) or \
+                        any(kw in elem_id.lower() for kw in ad_keywords):
+                    continue
+
+                text = element.get_text()
+                text_length = len(text)
+
+                # 计算文本评分 (长度 + 段落密度)
+                paragraph_count = len(text.split('\n'))
+                text_score = text_length * (paragraph_count / max(1, text_length))
+
+                # 跳过广告特征明显的元素
+                ad_text_keywords = ['vip', '开通', '广告', '注册', '送', '元', '点击', '下载', '领取']
+                if any(kw in text.lower() for kw in ad_text_keywords):
+                    continue
+
+                if text_score > max_text_score and text_length > 500:
+                    max_text_score = text_score
+                    candidate = element
+
+            if candidate:
+                self.current_status = f"Intelligently found content area (score: {max_text_score:.1f})"
+                return candidate
+
+            # 策略3: 回退到body
+            self.current_status = "Using entire body as content area"
+            return soup.body
+
+        except Exception as e:
+            self.current_status = f"Error extracting content: {str(e)}"
+            return None
+
+    def _clean_novel_text(self, text):
+        """专业级小说内容清理 - 增强版"""
+        try:
+            # 首先提取书名并保存
+            book_title = self._extract_book_title(text)
+            if book_title:
+                self.current_status = f"Extracted book title: {book_title}"
+                # 从文本中移除书名格式
+                text = re.sub(r'《[^》]+》', '', text)
+
+            # 第一阶段：移除已知广告模式
+            ad_patterns = [
+                r'开通VIP[\s\S]*?视频小说随便看',
+                r'打开[^\n]*?直营',
+                r'注册[^\n]*?送[\d]+元',
+                r'首[^\n]*?[\d\.]+%',
+                r'点击继续阅读',
+                r'下载[\s\S]*?App'
+                r'领取体验',
+                r'站长担保',
+                r'PS:.*',
+                r'注:.*',
+                r'\(本章完\)',
+                r'【[^】]*】',  # 确保移除任何剩余的【】标签
+                r'【.*?】',
+                r'（.*?）',
+                r'&nbsp;',
+                r'\s{3,}',
+                r'[\u25A0-\u25FF\u2605-\u2606\u2190-\u21FF]',  # 特殊符号
+                r'女王小说\s*>.*?>',
+                r'共\d+页:\s*上一页.*?下一页',
+                r'标签：[\s\S]*',  # 删掉标签之后所有的东西
+                r'上一篇：.*',
+                r'下一篇：.*',
+                r'没有了',
+                r'开元集团.*?官方直营',
+                r'款秒到',
+                r'电子婚娶率\s*\d+%',
+                r'^[\w\u4e00-\u9fa5]+小说网\s*>\s*[\w\u4e00-\u9fa5]+\s*>\s*',
+                r'巨额奖池\s*一夜暴富',
+                r'上一页.*?下一页',
+                r'nwxs.*?cc',
+                r'c.*?cc',
+                r'nv.*?com',
+                r'【[^】]*?女王小说[^】]*?】',
+                r'开元担保.*?官方直营',
+                r'注册即送.*?首台涨奖\d+%',
+                r'火爆排版电子.*?保姆奖',
+                r'站长独家',
+                r'喜欢.*?开元担保.*?官方直营',
+                r'上一页.*?共\d+页',
+                r'[a-zA-Z0-9]{5,}\.com',  # 网址
+                r'www\.[^\s]+',  # 网址
+                r'https?://[^\s]+',  # 网址
+                r'[a-zA-Z0-9]{8,}',  # 长字符串（可能是广告ID）
+                r'[^\u4e00-\u9fa5a-zA-Z0-9\s]{3,}',  # 连续特殊字符
+                r'^.{1,3}?\s*[↓↑→←↑↓→←]\s*.{1,3}?$',  # 箭头导航
+                r'^.{1,5}?[（(].{1,5}?[）)]$',  # 短括号内容
+                r'^\d{1,2}\s*[、.]\s*.{1,10}$',  # 序号列表（可能是推荐）
+                r'^.{1,10}?[：:].{1,10}?$',  # 短冒号内容
+                r'^[「『].{1,10}[」』]$',  # 单引号短内容
+                r'本书由.*?整理提供',
+                r'由.*?制作',
+                r'更多.*?请搜索.*?',
+                r'请记住本书首发地址.*?',
+                r'最新章节请访问.*?',
+                r'推荐阅读.*?',
+                r'喜欢.*?请关注.*?',
+                r'以下是.*?推荐内容',
+                r'本章未完.*?点击下一页继续阅读',
+                r'点击查看下一章',
+                r'上一章.*?下一章',
+                r'返回目录.*?',
+                r'加入书架.*?',
+                r'收藏本书.*?',
+                r'手机用户.*?',
+                r'电脑用户.*?',
+                r'扫码关注.*?',
+                r'微信公众号.*?',
+                r'QQ群.*?',
+                r'作者有话说.*?',
+                r'编辑推荐.*?',
+                r'读者评论.*?',
+                r'本书评分.*?',
+                r'字数统计.*?',
+                r'更新时间.*?',
+                r'最后更新.*?',
+                r'本章字数.*?',
+                r'上一章.*?下一章.*?返回目录',
+                r'[^\u4e00-\u9fa5]{5,}?\s*[^\u4e00-\u9fa5]{5,}',  # 连续非中文
+                r'[\u4e00-\u9fa5]{1,2}\s*[→←↑↓]\s*[\u4e00-\u9fa5]{1,2}',  # 中文箭头导航
+            ]
+
+            for pattern in ad_patterns:
+                text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+
+            # 清理空白字符（增强）
+            text = re.sub(r'\n{3,}', '\n\n', text)  # 减少多余空行
+            text = re.sub(r'^\s+', '', text, flags=re.MULTILINE)  # 清理行首空白
+            text = re.sub(r'\s+$', '', text, flags=re.MULTILINE)  # 清理行尾空白
+
+            # ==== 新增智能分段逻辑 ====
+            # 1. 按句子结束符分割文本
+            sentences = re.split(r'(?<=[。！？；：])\s+', text)
+
+            # 2. 智能合并短句并创建段落
+            paragraphs = []
+            current_paragraph = ""
+
+            for sentence in sentences:
+                # 跳过空句子
+                if not sentence.strip():
+                    continue
+
+                # 检测章节标题（如"第一章"、"第1节"等）
+                if re.match(r'^第[零一二三四五六七八九十百千\d]+[章节卷集部]', sentence):
+                    # 如果是章节标题，开始新段落
+                    if current_paragraph:
+                        paragraphs.append('    ' + current_paragraph.strip())
+                        current_paragraph = ""
+                    paragraphs.append(sentence.strip())
+                    continue
+
+                # 合并到当前段落
+                if len(current_paragraph) + len(sentence) < 200:  # 段落长度限制
+                    current_paragraph += sentence
+                else:
+                    # 当前段落达到长度限制，开始新段落
+                    if current_paragraph:
+                        paragraphs.append('    ' + current_paragraph.strip())
+                    current_paragraph = sentence
+
+            # 添加最后一个段落
+            if current_paragraph:
+                paragraphs.append('    ' + current_paragraph.strip())
+
+            # 3. 处理对话分行（特别优化）
+            formatted_paragraphs = []
+            for para in paragraphs:
+                # 检测对话模式（如："xxx说："、"xxx道："等）
+                if re.search(r'[，,:：]\s*["「『]', para) and not re.search(r'第[^\s]+章', para):
+                    # 按引号分行
+                    dialogue_lines = re.split(r'([「『][^」』]*[」』])', para)
+                    formatted_dialogue = []
+                    for line in dialogue_lines:
+                        if line.strip():
+                            # 添加缩进使对话更清晰
+                            formatted_dialogue.append('        ' + line.strip())
+                    if formatted_dialogue:
+                        formatted_paragraphs.extend(formatted_dialogue)
+                else:
+                    formatted_paragraphs.append(para)
+
+            return '\n\n'.join(formatted_paragraphs)
+
+        except Exception as e:
+            self.current_status = f"Error cleaning text: {str(e)}"
+            return text  # 返回原始文本作为备选
+
+    def _extract_book_title(self, text):
+        """从文本开头提取书名（《...》格式）"""
+        try:
+            # 提取书名的正则表达式
+            title_match = re.search(r'《([^》]+)》', text)
+
+            return title_match.group(1) if title_match else None
+        except Exception as e:
+            self.current_status = f"Error extracting book title: {str(e)}"
+            return None
+
+    def _extract_title(self, soup):
+        """提取精确标题 - 增强版"""
+        if soup is None:
+            self.current_status = "Warning: soup object is None, cannot extract title"
+            return "Unknown Chapter"
+
+        try:
+            # 先移除已知广告区域
+            ad_selectors = ['div.ad', 'div.ads', 'div.vip', 'div.pagination', 'div.breadcrumb']
+            for ad_selector in ad_selectors:
+                for ad in soup.select(ad_selector):
+                    try:
+                        ad.decompose()
+                    except:
+                        continue
+
+            # 尝试多种标题位置
+            title_selectors = [
+                'h1.article-title',
+                'h1.title',
+                'h1.entry-title',
+                'h1',
+                'title'
+            ]
+
+            for selector in title_selectors:
+                title_tag = soup.select_one(selector)
+                if title_tag:
+                    title = title_tag.get_text().strip()
+                    # 深度清理标题中的广告
+                    title = re.sub(r'[-|_]\s*npford\.com$', '', title, flags=re.IGNORECASE)
+                    title = re.sub(r'女王小说网\s*>.*?>', '', title)
+                    title = re.sub(r'【.*?】', '', title)
+                    title = re.sub(r'开元集团.*?官方直营', '', title)
+                    title = re.sub(r'猪款秒到', '', title)
+                    title = re.sub(r'电子婚娶率\s*\d+%', '', title)
+                    title = re.sub(r'巨额奖池\s*一夜暴富', '', title)
+                    title = re.sub(r'^_', '', title)  # 移除开头的下划线
+                    return title.strip()
+
+            # 使用URL作为备选标题
+            return f"Chapter {random.randint(1, 100)}"
+
+        except Exception as e:
+            self.current_status = f"Error extracting title: {str(e)}"
+            return "Unknown Chapter"
+
+    def _extract_next_page(self, soup, current_url):
+        """提取下一页链接 - 增强版"""
+        if soup is None:
+            self.current_status = "Warning: soup object is None, cannot extract next page"
+            return None
+
+        try:
+            # 先移除已知的广告区域
+            for ad_selector in ['div.ad', 'div.ads', 'div.vip']:
+                for ad in soup.select(ad_selector):
+                    try:
+                        ad.decompose()
+                    except:
+                        continue
+
+            # 增强的、更可靠的下一页选择器列表
+            # 优先使用用户提供的class，然后是标准的文本内容匹配，最后是旧的规则
+            next_selectors = [
+                'a.pagelink_a',  # 用户提供的class
+                'a:-soup-contains("下一页")',
+                'a:-soup-contains("下一章")',
+                'a.next',
+                'a.next-page',
+                'a.next-chapter',
+                'div.pagination a:last-child',
+                'div.chapter-nav a:last-child'
+            ]
+
+            def get_status(self):
+                return {
+                    'is_scraping': self.is_scraping,
+                    'progress': self.current_progress,
+                    'status': self.current_status,
+                    'last_result': self.last_result
+                }
+
+            # 优先遍历选择器
+            for selector in next_selectors:
+                next_link = soup.select_one(selector)
+                if next_link and next_link.get('href'):
+                    href = next_link.get('href')
+                    # 过滤广告和无效链接
+                    ad_keywords = ['ad', 'vip', 'register', 'download']
+                    if any(kw in href.lower() for kw in ad_keywords):
+                        continue
+                    if href == current_url or href == "#" or not href.strip():
+                        continue
+                    return urljoin(current_url, href)
+
+            # 如果以上所有选择器都失败，则进行最终的文本匹配
+            all_links = soup.find_all('a', href=True)
+            for link in all_links:
+                if link.get_text(strip=True) in ["下一页", "下一章"]:
+                    href = link.get('href')
+                    if href != "#" and href.strip():
+                        return urljoin(current_url, href)
+
+            return None
+
+        except Exception as e:
+            self.current_status = f"Error extracting next page: {str(e)}"
+            return None

@@ -1,0 +1,143 @@
+from flask import Flask, render_template, request, jsonify, send_file
+from novel_scraper import NovelScraper
+import os
+import uuid
+import json
+import time
+from datetime import datetime
+from werkzeug.utils import secure_filename
+from database import Database
+import config
+import requests
+
+app = Flask(__name__)
+app.config['UPLOAD_FOLDER'] = config.UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB
+db = Database()
+
+# 初始化小说爬虫
+novel_scraper = NovelScraper()
+
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/api/scrape/status', methods=['GET'])
+def get_scraper_status():
+    return jsonify(novel_scraper.get_status())
+
+@app.route('/api/scrape/stop', methods=['POST'])
+def stop_scraping():
+    novel_scraper.stop_scraping()
+    return jsonify({'status': 'stopped', 'message': 'Scraping stopped'})
+
+
+@app.route('/api/chat', methods=['POST'])
+def chat():
+    data = request.json
+    prompt = data.get('prompt', '')
+    model = data.get('model', 'deepseek-chat')
+    temperature = float(data.get('temperature', 0.7))
+    max_tokens = int(data.get('max_tokens', 2048))
+    chat_id = data.get('chat_id', str(uuid.uuid4()))
+
+    # --- 开始修改 ---
+    try:
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {config.DEEPSEEK_API_KEY}'
+        }
+
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+
+        # 调用真实的 DeepSeek API
+        api_response = requests.post(config.DEEPSEEK_API_URL, headers=headers, json=payload)
+
+        if api_response.status_code != 200:
+            return jsonify({'error': f'API Error: {api_response.text}'}), api_response.status_code
+
+        response_data = api_response.json()
+        response_text = response_data['choices'][0]['message']['content']
+        tokens_used = response_data['usage']['total_tokens']
+
+        # 保存真实的用户消息和API响应到数据库
+        db.save_message(chat_id, 'user', prompt, model)
+        db.save_message(chat_id, 'assistant', response_text, model)
+
+        return jsonify({
+            'response': response_text,
+            'chat_id': chat_id,
+            'model': model,
+            'tokens_used': tokens_used
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    # --- 结束修改 ---
+
+
+@app.route('/api/scrape', methods=['POST'])
+def scrape_novel():
+    data = request.json  # <--- 修改这里
+    url = data.get('url', '')
+    filename = data.get('filename', 'novel.txt')
+    max_chapters = int(data.get('max_chapters', 50))
+    delay = float(data.get('delay', 1.5))
+
+    # 关键：将文件名与UPLOAD_FOLDER拼接，确保保存到D:\novels
+    full_filename = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+
+    # 启动爬虫（传入拼接后的完整路径）
+    result = novel_scraper.start_scraping(url, full_filename, max_chapters, delay)
+    return jsonify(result)
+
+
+@app.route('/api/history', methods=['GET'])
+def get_history():
+    chats = db.get_chat_history()
+    return jsonify(chats)
+
+
+@app.route('/api/upload', methods=['POST'])
+def upload_file():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+
+    if file:
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(filepath)
+
+        # 读取文件内容
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        return jsonify({
+            'filename': filename,
+            'content': content,
+            'size': os.path.getsize(filepath)
+        })
+
+
+@app.route('/api/download/<filename>')
+def download_file(filename):
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    return send_file(filepath, as_attachment=True)
+
+
+if __name__ == '__main__':
+    # 即使文件夹已存在，也不会报错（exist_ok=True 表示允许文件夹存在）
+    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+    app.run(debug=True, port=5001)

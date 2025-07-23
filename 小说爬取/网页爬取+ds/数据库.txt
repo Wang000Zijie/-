@@ -1,0 +1,199 @@
+import sqlite3
+import os
+from datetime import datetime
+
+
+class Database:
+    def __init__(self, db_path='database.db'):
+        self.db_path = db_path
+        self._init_db()
+
+    def _init_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+
+            # 创建聊天记录表
+            cursor.execute('''
+                           CREATE TABLE IF NOT EXISTS chats
+                           (
+                               id
+                               TEXT
+                               PRIMARY
+                               KEY,
+                               title
+                               TEXT,
+                               created_at
+                               TEXT,
+                               model
+                               TEXT
+                           )
+                           ''')
+
+            # 创建消息表
+            cursor.execute('''
+                           CREATE TABLE IF NOT EXISTS messages
+                           (
+                               id
+                               INTEGER
+                               PRIMARY
+                               KEY
+                               AUTOINCREMENT,
+                               chat_id
+                               TEXT,
+                               role
+                               TEXT,
+                               content
+                               TEXT,
+                               model
+                               TEXT,
+                               created_at
+                               TEXT,
+                               FOREIGN
+                               KEY
+                           (
+                               chat_id
+                           ) REFERENCES chats
+                           (
+                               id
+                           )
+                               )
+                           ''')
+
+            # 创建小说下载历史表
+            cursor.execute('''
+                           CREATE TABLE IF NOT EXISTS novel_history
+                           (
+                               id
+                               INTEGER
+                               PRIMARY
+                               KEY
+                               AUTOINCREMENT,
+                               url
+                               TEXT,
+                               filename
+                               TEXT,
+                               novel_title
+                               TEXT,
+                               chapters
+                               INTEGER,
+                               created_at
+                               TEXT
+                           )
+                           ''')
+
+            conn.commit()
+
+    def save_message(self, chat_id, role, content, model):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+
+            # 检查聊天是否存在
+            cursor.execute('SELECT id FROM chats WHERE id = ?', (chat_id,))
+            if not cursor.fetchone():
+                # 创建新聊天
+                title = content[:50] + '...' if len(content) > 50 else content
+                cursor.execute(
+                    'INSERT INTO chats (id, title, created_at, model) VALUES (?, ?, ?, ?)',
+                    (chat_id, title, datetime.now().isoformat(), model)
+                )
+
+            # 保存消息
+            cursor.execute(
+                'INSERT INTO messages (chat_id, role, content, model, created_at) VALUES (?, ?, ?, ?, ?)',
+                (chat_id, role, content, model, datetime.now().isoformat())
+            )
+
+            conn.commit()
+
+    def get_chat_history(self):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+
+            # 获取所有聊天
+            cursor.execute('''
+                           SELECT id, title, created_at, model
+                           FROM chats
+                           ORDER BY datetime(created_at) DESC
+                           ''')
+            chats = cursor.fetchall()
+
+            result = []
+            for chat in chats:
+                chat_id, title, created_at, model = chat
+
+                # 获取聊天中的最后一条消息
+                cursor.execute('''
+                               SELECT content
+                               FROM messages
+                               WHERE chat_id = ?
+                               ORDER BY datetime(created_at) DESC LIMIT 1
+                               ''', (chat_id,))
+                last_message = cursor.fetchone()
+                preview = last_message[0][:100] + '...' if last_message and len(last_message[0]) > 100 else (
+                    last_message[0] if last_message else '')
+
+                result.append({
+                    'id': chat_id,
+                    'title': title,
+                    'preview': preview,
+                    'created_at': created_at,
+                    'model': model
+                })
+
+            return result
+
+    def get_chat_messages(self, chat_id):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                           SELECT role, content, created_at
+                           FROM messages
+                           WHERE chat_id = ?
+                           ORDER BY datetime(created_at) ASC
+                           ''', (chat_id,))
+
+            messages = []
+            for role, content, created_at in cursor.fetchall():
+                messages.append({
+                    'role': role,
+                    'content': content,
+                    'created_at': created_at
+                })
+
+            return messages
+
+    def save_novel_history(self, url, filename, novel_title, chapters):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                'INSERT INTO novel_history (url, filename, novel_title, chapters, created_at) VALUES (?, ?, ?, ?, ?)',
+                (url, filename, novel_title, chapters, datetime.now().isoformat())
+            )
+
+            conn.commit()
+
+    def get_novel_history(self):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                           SELECT id, url, filename, novel_title, chapters, created_at
+                           FROM novel_history
+                           ORDER BY datetime(created_at) DESC
+                           ''')
+
+            history = []
+            for row in cursor.fetchall():
+                id, url, filename, novel_title, chapters, created_at = row
+                history.append({
+                    'id': id,
+                    'url': url,
+                    'filename': filename,
+                    'novel_title': novel_title,
+                    'chapters': chapters,
+                    'created_at': created_at
+                })
+
+            return history
