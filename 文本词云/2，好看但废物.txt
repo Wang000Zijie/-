@@ -1,0 +1,267 @@
+# analyzer_v2_1.py
+import os
+import re
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+from collections import Counter
+import threading
+import platform
+import pandas as pd
+from matplotlib import pyplot as plt
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+try:
+    from wordcloud import WordCloud
+    HAS_WORDCLOUD = True
+except ImportError:
+    HAS_WORDCLOUD = False
+
+# -------------- 主题配色 --------------
+THEMES = {
+    "light": dict(bg="#f0f0f0", fg="#333", accent="#4CAF50"),
+    "dark": dict(bg="#2e2e2e", fg="#e4e4e4", accent="#26a69a")
+}
+current_theme = "light"
+
+
+class ScrollableFrame(ttk.Frame):
+    """带纵向滚动条的 Frame，用于图表区"""
+    def __init__(self, parent, *a, **k):
+        super().__init__(parent, *a, **k)
+        canvas = tk.Canvas(self, highlightthickness=0)
+        bar = ttk.Scrollbar(self, orient="vertical", command=canvas.yview)
+        self.inner = ttk.Frame(canvas)
+        self.inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=self.inner, anchor="nw")
+        canvas.configure(yscrollcommand=bar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        bar.pack(side="right", fill="y")
+
+
+class AnalyzerApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Excel 词语频率分析 v2.1")
+        self.root.geometry("1000x720")
+        self.root.minsize(850, 600)
+        self.file_path = None
+        self.df = None
+        self.word_freq = None
+        self.stopwords = {"的", "了", "在", "是", "我", "有", "和", "就", "不", "人"}
+
+        # 主题切换变量
+        self.theme_var = tk.StringVar(value=current_theme)
+        self.setup_theme()
+        self.build_ui()
+        self.root.bind_all("<Control-o>", lambda e: self.open_file())
+
+    # ---------------- 主题 ----------------
+    def setup_theme(self, theme=None):
+        global current_theme
+        if theme:
+            current_theme = theme
+        style = ttk.Style(self.root)
+        style.theme_use("clam")
+        bg, fg, accent = THEMES[current_theme]["bg"], THEMES[current_theme]["fg"], THEMES[current_theme]["accent"]
+        style.configure(".", background=bg, foreground=fg)
+        style.configure("TButton", background=accent, foreground="white", borderwidth=0, focusthickness=0)
+        style.map("TButton", background=[("active", accent)])
+        style.configure("TLabelframe.Label", foreground=accent, font=("SimHei", 11, "bold"))
+        self.root.configure(bg=bg)
+
+    # ---------------- UI ----------------
+    def build_ui(self):
+        # 顶部工具栏
+        top = ttk.Frame(self.root)
+        top.pack(fill="x", padx=5, pady=2)
+        ttk.Button(top, text="📁 打开", command=self.open_file).pack(side="left", padx=2)
+        ttk.Button(top, text="🎨 深色", command=self.toggle_theme).pack(side="right", padx=2)
+
+        # 主水平 PanedWindow
+        paned = ttk.PanedWindow(self.root, orient="horizontal")
+        paned.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # 左侧控制面板
+        left = ttk.LabelFrame(paned, text="分析设置", padding=10)
+        paned.add(left, weight=1)
+
+        # 文件路径
+        ttk.Label(left, text="文件路径").grid(row=0, column=0, sticky="w")
+        self.path_var = tk.StringVar()
+        ttk.Entry(left, textvariable=self.path_var, width=45).grid(row=0, column=1, columnspan=2, padx=5, pady=3)
+        ttk.Button(left, text="浏览", command=self.open_file).grid(row=0, column=3, padx=5)
+
+        # 列选择
+        ttk.Label(left, text="选择列").grid(row=1, column=0, sticky="w")
+        self.col_combo = ttk.Combobox(left, state="readonly", width=30)
+        self.col_combo.grid(row=1, column=1, columnspan=2, padx=5, pady=3)
+
+        # 显示词数：滑动条 + 数字输入
+        ttk.Label(left, text="显示词数").grid(row=2, column=0, sticky="w")
+        self.top_n = tk.IntVar(value=20)
+        ttk.Scale(left, from_=5, to=50, orient="horizontal", variable=self.top_n,
+                  length=120, command=lambda e: self.top_n.set(int(float(e)))).grid(row=2, column=1, padx=5)
+        ttk.Spinbox(left, textvariable=self.top_n, width=4, from_=5, to=50).grid(row=2, column=2, padx=3)
+
+        # 停用词
+        ttk.Label(left, text="停用词").grid(row=3, column=0, sticky="nw")
+        self.stop_entry = tk.Text(left, width=28, height=4, wrap="word")
+        self.stop_entry.grid(row=3, column=1, columnspan=2, padx=5, pady=3)
+        self.stop_entry.insert("1.0", ",".join(self.stopwords))
+
+        # 分析按钮
+        ttk.Button(left, text="🔍 开始分析", command=self.run_analysis).grid(
+            row=4, column=1, pady=10, sticky="w")
+
+        # 右侧结果区
+        right = ttk.LabelFrame(paned, text="分析结果", padding=10)
+        paned.add(right, weight=3)
+
+        # 图表类型切换 & 工具按钮
+        ctrl = ttk.Frame(right)
+        ctrl.pack(fill="x", pady=3)
+        self.chart_type = tk.StringVar(value="柱状图")
+        for t in ["柱状图", "饼状图", ("词云图" if HAS_WORDCLOUD else None)]:
+            if not t:
+                continue
+            ttk.Radiobutton(ctrl, text=t, variable=self.chart_type, value=t).pack(side="left", padx=5)
+        ttk.Button(ctrl, text="📋 复制高频词", command=self.copy_words).pack(side="right", padx=5)
+        ttk.Button(ctrl, text="💾 保存图表", command=self.save_chart).pack(side="right", padx=5)
+
+        # 可滚动图表容器
+        self.scroll = ScrollableFrame(right)
+        self.scroll.pack(fill="both", expand=True)
+        self.chart_container = self.scroll.inner
+
+        # 状态栏
+        self.status = tk.StringVar(value="就绪")
+        ttk.Label(self.root, textvariable=self.status, relief="sunken", anchor="w").pack(fill="x", padx=2, pady=2)
+
+    # ---------------- 功能 ----------------
+    def open_file(self):
+        path = filedialog.askopenfilename(
+            title="选择文件",
+            filetypes=[
+                ("所有支持格式", "*.xlsx *.xls *.txt *.docx"),
+                ("Excel", "*.xlsx *.xls"),
+                ("文本", "*.txt"),
+                ("Word", "*.docx")
+            ])
+        if not path:
+            return
+        self.path_var.set(path)
+        self.file_path = path
+        ext = os.path.splitext(path)[1].lower()
+        try:
+            if ext in {".xlsx", ".xls"}:
+                self.df = pd.read_excel(path)
+                self.col_combo.config(values=list(self.df.columns))
+                self.col_combo.set("")
+                self.status.set("Excel 已加载")
+            elif ext == ".txt":
+                with open(path, encoding="utf-8") as f:
+                    self.text_content = f.read()
+                self.col_combo.config(values=[])
+                self.status.set("文本已加载")
+            elif ext == ".docx":
+                import docx
+                doc = docx.Document(path)
+                self.text_content = "\n".join(p.text for p in doc.paragraphs)
+                self.col_combo.config(values=[])
+                self.status.set("Word 已加载")
+        except Exception as e:
+            messagebox.showerror("错误", str(e))
+
+    def run_analysis(self):
+        threading.Thread(target=self._analyze, daemon=True).start()
+
+    def _analyze(self):
+        self.status.set("分析中...")
+        try:
+            # 取文本
+            if self.df is not None:
+                col = self.col_combo.get()
+                if not col:
+                    raise ValueError("请选择列")
+                text = " ".join(self.df[col].dropna().astype(str))
+            else:
+                text = self.text_content
+            # 清洗
+            text = re.sub(r"[^\u4e00-\u9fa5a-zA-Z0-9]+", " ", text)
+            words = text.split()
+            stop = {s.strip() for s in self.stop_entry.get("1.0", "end-1c").split(",") if s.strip()}
+            words = [w for w in words if w and w not in stop]
+            self.word_freq = Counter(words)
+            self.status.set(f"完成：{len(words)} 词，{len(self.word_freq)} 种")
+            self.show_chart()
+        except Exception as e:
+            messagebox.showerror("错误", str(e))
+            self.status.set("分析失败")
+
+    def show_chart(self):
+        if not self.word_freq:
+            return
+        top = self.top_n.get()
+        data = self.word_freq.most_common(top)
+        if not data:
+            return
+        words, freqs = zip(*data)
+
+        # 清空旧图
+        for w in self.chart_container.winfo_children():
+            w.destroy()
+
+        fig = Figure(figsize=(7, 4.5), dpi=100)
+        ax = fig.add_subplot(111)
+        ctype = self.chart_type.get()
+
+        if ctype == "柱状图":
+            ax.bar(words, freqs, color="#4CAF50")
+            ax.set_title(f"Top {top} 词语频率")
+            plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+        elif ctype == "饼状图":
+            ax.pie(freqs, labels=words, autopct="%1.1f%%", startangle=90)
+            ax.axis("equal")
+            ax.set_title(f"Top {top} 词语占比")
+        elif ctype == "词云图" and HAS_WORDCLOUD:
+            wc = WordCloud(
+                font_path="simhei.ttf" if platform.system() == "Windows" else None,
+                background_color=THEMES[current_theme]["bg"],
+                width=700, height=400
+            ).generate_from_frequencies(dict(data))
+            ax.imshow(wc, interpolation="bilinear")
+            ax.axis("off")
+            ax.set_title("词云图")
+
+        canvas = FigureCanvasTkAgg(fig, master=self.chart_container)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+        self.canvas = canvas
+
+    def copy_words(self):
+        if not self.word_freq:
+            return
+        lines = [f"{w}\t{f}" for w, f in self.word_freq.most_common(self.top_n.get())]
+        self.root.clipboard_clear()
+        self.root.clipboard_append("\n".join(lines))
+        self.status.set("高频词已复制")
+
+    def save_chart(self):
+        if not hasattr(self, "canvas"):
+            return
+        file = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG", "*.png"), ("JPG", "*.jpg"), ("SVG", "*.svg")])
+        if file:
+            self.canvas.figure.savefig(file, dpi=300, bbox_inches="tight")
+            self.status.set("图表已保存")
+
+    def toggle_theme(self):
+        new = "dark" if current_theme == "light" else "light"
+        self.setup_theme(new)
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    AnalyzerApp(root)
+    root.mainloop()

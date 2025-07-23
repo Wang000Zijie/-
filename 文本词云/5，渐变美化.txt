@@ -1,0 +1,1281 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+from collections import Counter
+import re
+import os
+import tkinter as tk
+from tkinter import filedialog, ttk, messagebox, scrolledtext
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.figure import Figure
+import webbrowser
+from datetime import datetime
+import platform
+import sys
+import docx
+from wordcloud import WordCloud
+import numpy as np
+from matplotlib import font_manager as fm
+import threading
+import time
+import textwrap
+from matplotlib.patches import Wedge
+import matplotlib.colors as mcolors
+
+# 设置中文显示 - 优化字体检测逻辑
+plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
+
+
+# 全局字体设置
+def setup_fonts():
+    """设置全局字体"""
+    # 尝试查找系统中文字体
+    chinese_fonts = []
+
+    # Windows系统
+    if platform.system() == "Windows":
+        chinese_fonts = [
+            "Microsoft YaHei", "SimHei", "SimSun", "KaiTi",
+            "FangSong", "YouYuan", "STXihei", "STKaiti"
+        ]
+
+    # macOS系统
+    elif platform.system() == "Darwin":
+        chinese_fonts = [
+            "PingFang SC", "Heiti SC", "Hiragino Sans GB",
+            "STHeiti", "Songti SC", "Kaiti SC"
+        ]
+
+    # Linux系统
+    else:
+        chinese_fonts = [
+            "WenQuanYi Micro Hei", "Noto Sans CJK SC",
+            "Source Han Sans CN", "AR PL UMing CN",
+            "AR PL UKai CN"
+        ]
+
+    # 检测可用字体
+    available_fonts = []
+    for font in chinese_fonts:
+        try:
+            # 尝试设置字体
+            plt.rcParams["font.family"] = font
+            # 测试绘制
+            fig, ax = plt.subplots(figsize=(1, 1))
+            ax.text(0.5, 0.5, "测试", fontsize=10)
+            plt.close(fig)
+            available_fonts.append(font)
+        except:
+            continue
+
+    # 如果没有找到可用的中文字体，使用默认字体
+    if not available_fonts:
+        plt.rcParams["font.family"] = ["SimHei", "WenQuanYi Micro Hei", "Heiti TC"]
+        return "SimHei"
+
+    # 返回第一个可用的字体
+    return available_fonts[0]
+
+
+# 设置全局字体
+global_font = setup_fonts()
+print(f"已设置全局字体: {global_font}")
+
+
+class TextAnalyzerApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("AI文本分析工具 v3.2")
+        self.root.geometry("1081x843")
+        self.root.resizable(True, True)
+
+        # 微信绿色风格配色方案
+        self.bg_color = "#f0f8f0"  # 背景色
+        self.sidebar_color = "#e0f0e0"  # 侧边栏背景色
+        self.header_color = "#07c160"  # 微信绿色
+        self.card_color = "#ffffff"  # 卡片白色
+        self.text_color = "#333333"  # 主要文本颜色
+        self.secondary_text = "#666666"  # 次要文本颜色
+        self.highlight_color = "#07c160"  # 高亮绿色
+        self.ai_color = "#129611"  # AI功能深绿色
+        self.accent_color = "#ff9800"  # 强调色橙色
+
+        self.root.configure(bg=self.bg_color)
+
+        # 数据相关变量
+        self.file_path = None
+        self.df = None
+        self.selected_column = None
+        self.word_freq = None
+        self.stopwords = set(
+            ['的', '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一', '一个', '上', '也', '很', '到',
+             '说', '要', '去', '你', '会', '着', '没有', '看', '好', '自己', '这'])
+
+        # 图表相关变量
+        self.current_chart_type = "词云图"
+        self.chart_canvas = None
+        self.toolbar = None
+
+        # AI相关变量
+        self.ai_api_key = ""
+        self.ai_model = "deepseek-chat"
+        self.ai_history = []
+
+        self.create_widgets()
+
+    def create_widgets(self):
+        # 创建主框架 - 专业布局
+        main_frame = tk.Frame(self.root, bg=self.bg_color)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # 左侧功能区域 (1/4宽度)
+        sidebar_frame = tk.Frame(main_frame, bg=self.sidebar_color, width=250)
+        sidebar_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
+
+        # 顶部标题
+        header = tk.Frame(sidebar_frame, bg=self.header_color, height=60)
+        header.pack(fill=tk.X)
+
+        tk.Label(
+            header,
+            text="📊 AI文本分析工具",
+            font=(global_font, 14, 'bold'),
+            bg=self.header_color,
+            fg='white',
+            padx=15,
+            pady=15
+        ).pack(side=tk.LEFT)
+
+        # 功能卡片 - 文件选择
+        file_card = tk.Frame(sidebar_frame, bg=self.card_color, padx=15, pady=15,
+                             highlightbackground="#dee2e6", highlightthickness=1)
+        file_card.pack(fill=tk.X, pady=10, padx=10)
+
+        tk.Label(
+            file_card,
+            text="文件选择",
+            font=(global_font, 12, 'bold'),
+            bg=self.card_color,
+            fg=self.text_color
+        ).pack(anchor=tk.W, pady=(0, 10))
+
+        # 文件类型选择器
+        type_frame = tk.Frame(file_card, bg=self.card_color)
+        type_frame.pack(fill=tk.X, pady=5)
+
+        self.file_type_var = tk.StringVar(value="all")
+        types = [
+            ("所有文件", "all"),
+            ("Excel", "excel"),
+            ("文本", "txt"),
+            ("Word", "docx")
+        ]
+
+        for i, (text, value) in enumerate(types):
+            btn = tk.Radiobutton(
+                type_frame,
+                text=text,
+                variable=self.file_type_var,
+                value=value,
+                bg=self.card_color,
+                fg=self.text_color,
+                selectcolor=self.sidebar_color,
+                font=(global_font, 10),
+                indicatoron=0,
+                width=6,
+                bd=1,
+                relief=tk.SOLID
+            )
+            btn.pack(side=tk.LEFT, padx=(0, 5) if i < len(types) - 1 else 0)
+
+        # 文件选择按钮
+        file_btn = tk.Button(
+            file_card,
+            text="📁 选择文件",
+            command=self.browse_file,
+            bg=self.highlight_color,
+            fg='white',
+            font=(global_font, 11),
+            bd=0,
+            padx=10,
+            pady=5,
+            relief=tk.FLAT
+        )
+        file_btn.pack(fill=tk.X, pady=10)
+
+        self.file_path_var = tk.StringVar(value="未选择文件")
+        file_label = tk.Label(
+            file_card,
+            textvariable=self.file_path_var,
+            bg=self.card_color,
+            fg=self.secondary_text,
+            font=(global_font, 9),
+            wraplength=200,
+            anchor=tk.W,
+            justify=tk.LEFT
+        )
+        file_label.pack(fill=tk.X, pady=5)
+
+        # 功能卡片 - 分析设置
+        settings_card = tk.Frame(sidebar_frame, bg=self.card_color, padx=15, pady=15,
+                                 highlightbackground="#dee2e6", highlightthickness=1)
+        settings_card.pack(fill=tk.X, pady=10, padx=10)
+
+        tk.Label(
+            settings_card,
+            text="分析设置",
+            font=(global_font, 12, 'bold'),
+            bg=self.card_color,
+            fg=self.text_color
+        ).pack(anchor=tk.W, pady=(0, 10))
+
+        # 列选择
+        column_frame = tk.Frame(settings_card, bg=self.card_color)
+        column_frame.pack(fill=tk.X, pady=5)
+
+        tk.Label(
+            column_frame,
+            text="选择列:",
+            bg=self.card_color,
+            fg=self.text_color,
+            font=(global_font, 10)
+        ).pack(side=tk.LEFT, padx=(0, 10))
+
+        self.column_combo = ttk.Combobox(
+            column_frame,
+            state="disabled",
+            width=15,
+            font=(global_font, 10)
+        )
+        self.column_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.column_combo.bind("<<ComboboxSelected>>", self.on_column_selected)
+
+        # 词语数量设置
+        filter_frame = tk.Frame(settings_card, bg=self.card_color)
+        filter_frame.pack(fill=tk.X, pady=10)
+
+        tk.Label(
+            filter_frame,
+            text="显示词语数量:",
+            bg=self.card_color,
+            fg=self.text_color,
+            font=(global_font, 10)
+        ).pack(side=tk.LEFT, padx=(0, 10))
+
+        self.filter_var = tk.IntVar(value=20)
+        filter_scale = tk.Scale(
+            filter_frame,
+            from_=5,
+            to=50,
+            orient=tk.HORIZONTAL,
+            variable=self.filter_var,
+            bg=self.card_color,
+            fg=self.text_color,
+            highlightbackground=self.card_color,
+            length=120,
+            showvalue=0,
+            sliderrelief=tk.FLAT,
+            bd=0,
+            command=self.on_filter_change
+        )
+        filter_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        self.filter_label = tk.Label(
+            filter_frame,
+            textvariable=self.filter_var,
+            bg=self.card_color,
+            fg=self.highlight_color,
+            font=(global_font, 10, 'bold'),
+            width=3
+        )
+        self.filter_label.pack(side=tk.LEFT, padx=(5, 0))
+
+        # 停用词设置
+        tk.Label(
+            settings_card,
+            text="停用词设置:",
+            bg=self.card_color,
+            fg=self.text_color,
+            font=(global_font, 10)
+        ).pack(anchor=tk.W, pady=(10, 5))
+
+        self.stopwords_entry = tk.Entry(
+            settings_card,
+            font=(global_font, 10),
+            bd=1,
+            relief=tk.SOLID
+        )
+        self.stopwords_entry.pack(fill=tk.X, pady=5)
+        self.stopwords_entry.insert(0, "的,了,在,是,我,有,和,就,不,人")
+        self.stopwords_entry.bind("<Return>", self.analyze_data)
+
+        # 停用词预设按钮
+        preset_frame = tk.Frame(settings_card, bg=self.card_color)
+        preset_frame.pack(fill=tk.X, pady=5)
+
+        presets = [
+            ("基础", "的,了,在,是,我,有,和,就,不,人"),
+            ("扩展", "的,了,在,是,我,有,和,就,不,人,都,一,一个,上,也,很,到,说,要,去,你,会,着,没有,看,好,自己,这"),
+            ("清空", "")
+        ]
+
+        for i, (text, value) in enumerate(presets):
+            btn = tk.Button(
+                preset_frame,
+                text=text,
+                command=lambda v=value: self.stopwords_entry.delete(0, tk.END) or self.stopwords_entry.insert(0, v),
+                bg="#e9ecef",
+                fg=self.text_color,
+                font=(global_font, 9),
+                bd=0,
+                padx=8,
+                pady=2
+            )
+            btn.pack(side=tk.LEFT, padx=(0, 5) if i < len(presets) - 1 else 0)
+
+        # 分析按钮
+        analyze_btn = tk.Button(
+            settings_card,
+            text="🔍 开始分析",
+            command=self.analyze_data,
+            bg=self.highlight_color,
+            fg='white',
+            font=(global_font, 11, 'bold'),
+            bd=0,
+            padx=10,
+            pady=8
+        )
+        analyze_btn.pack(fill=tk.X, pady=10)
+
+        # AI助手按钮
+        ai_btn = tk.Button(
+            settings_card,
+            text="🤖 AI助手",
+            command=self.open_ai_assistant,
+            bg=self.ai_color,
+            fg='white',
+            font=(global_font, 11, 'bold'),
+            bd=0,
+            padx=10,
+            pady=8
+        )
+        ai_btn.pack(fill=tk.X, pady=5)
+
+        # 右侧主显示区域 (3/4宽度)
+        main_content = tk.Frame(main_frame, bg=self.bg_color)
+        main_content.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+        # 图表选择工具栏
+        toolbar = tk.Frame(main_content, bg=self.card_color, height=40,
+                           highlightbackground="#dee2e6", highlightthickness=1)
+        toolbar.pack(fill=tk.X, pady=(0, 5))
+
+        # 图表类型选择
+        self.chart_type = tk.StringVar(value="词云图")
+        types = [("饼状图", "饼状图"), ("柱状图", "柱状图"), ("词云图", "词云图")]
+
+        for i, (text, value) in enumerate(types):
+            btn = tk.Radiobutton(
+                toolbar,
+                text=text,
+                variable=self.chart_type,
+                value=value,
+                bg=self.card_color,
+                fg=self.text_color,
+                selectcolor=self.sidebar_color,
+                font=(global_font, 10),
+                indicatoron=0,
+                width=8,
+                bd=1,
+                relief=tk.SOLID if self.chart_type.get() != value else tk.SUNKEN,
+                command=self.update_chart_type
+            )
+            btn.pack(side=tk.LEFT, padx=(10, 0) if i == 0 else (0, 0), pady=5)
+
+        # 操作按钮
+        actions = [
+            ("🔄 刷新", self.reset_view),
+            ("💾 保存图表", self.save_chart),
+            ("📝 导出数据", self.export_wordcloud)
+        ]
+
+        for text, command in actions:
+            btn = tk.Button(
+                toolbar,
+                text=text,
+                command=command,
+                bg="#e9ecef",
+                fg=self.text_color,
+                font=(global_font, 9),
+                bd=1,
+                relief=tk.FLAT,
+                padx=8,
+                pady=2
+            )
+            btn.pack(side=tk.RIGHT, padx=5)
+
+        # 图表显示区域 (占据主要空间)
+        self.chart_container = tk.Frame(main_content, bg='white', bd=0)
+        self.chart_container.pack(fill=tk.BOTH, expand=True)
+
+        # 创建图表占位符
+        self.chart_placeholder = tk.Label(
+            self.chart_container,
+            text="请选择文件并开始分析",
+            bg='white',
+            fg=self.secondary_text,
+            font=(global_font, 14),
+            pady=100
+        )
+        self.chart_placeholder.pack(fill=tk.BOTH, expand=True)
+
+        # 数据预览区域
+        preview_frame = tk.LabelFrame(
+            main_content,
+            text="数据预览",
+            bg=self.bg_color,
+            fg=self.text_color,
+            font=(global_font, 10, 'bold'),
+            padx=10,
+            pady=5,
+            height=100  # 固定高度
+        )
+        preview_frame.pack(fill=tk.X, pady=(5, 0))
+        preview_frame.pack_propagate(False)  # 固定高度
+
+        # 添加滚动条
+        scroll_frame = tk.Frame(preview_frame, bg=self.bg_color)
+        scroll_frame.pack(fill=tk.BOTH, expand=True)
+
+        scrollbar = tk.Scrollbar(scroll_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.preview_text = tk.Text(
+            scroll_frame,
+            height=5,  # 固定5行高度
+            font=(global_font, 9),
+            bg='white',
+            fg=self.text_color,
+            padx=10,
+            pady=10,
+            bd=0,
+            yscrollcommand=scrollbar.set
+        )
+        self.preview_text.pack(fill=tk.BOTH, expand=True)
+
+        scrollbar.config(command=self.preview_text.yview)
+
+        # 状态栏
+        status_frame = tk.Frame(self.root, bg=self.header_color, height=24)
+        status_frame.pack(fill=tk.X, side=tk.BOTTOM)
+
+        self.status_var = tk.StringVar(value="就绪")
+        status_label = tk.Label(
+            status_frame,
+            textvariable=self.status_var,
+            bg=self.header_color,
+            fg='white',
+            font=(global_font, 9),
+            anchor=tk.W,
+            padx=10
+        )
+        status_label.pack(fill=tk.X)
+
+    def open_ai_assistant(self):
+        """打开AI助手对话框"""
+        ai_window = tk.Toplevel(self.root)
+        ai_window.title("AI助手 - 数据分析专家")
+        ai_window.geometry("700x600")
+        ai_window.resizable(True, True)
+        ai_window.configure(bg=self.bg_color)
+        ai_window.grab_set()  # 模态对话框
+
+        # 顶部标题
+        header = tk.Frame(ai_window, bg=self.ai_color, height=50)
+        header.pack(fill=tk.X)
+
+        tk.Label(
+            header,
+            text="🤖 AI数据分析助手",
+            font=(global_font, 14, 'bold'),
+            bg=self.ai_color,
+            fg='white',
+            padx=15,
+            pady=15
+        ).pack(side=tk.LEFT)
+
+        # 主内容区域
+        main_frame = tk.Frame(ai_window, bg=self.bg_color, padx=10, pady=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # API设置区域
+        api_frame = tk.LabelFrame(
+            main_frame,
+            text="API设置",
+            bg=self.card_color,
+            fg=self.text_color,
+            font=(global_font, 10, 'bold'),
+            padx=10,
+            pady=10
+        )
+        api_frame.pack(fill=tk.X, pady=5)
+
+        # API密钥输入
+        api_key_frame = tk.Frame(api_frame, bg=self.card_color)
+        api_key_frame.pack(fill=tk.X, pady=5)
+
+        tk.Label(
+            api_key_frame,
+            text="API密钥:",
+            bg=self.card_color,
+            fg=self.text_color,
+            font=(global_font, 10)
+        ).pack(side=tk.LEFT, padx=(0, 10))
+
+        self.api_key_entry = tk.Entry(
+            api_key_frame,
+            font=(global_font, 10),
+            width=40,
+            show="*"
+        )
+        self.api_key_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.api_key_entry.insert(0, self.ai_api_key)
+
+        # 模型选择
+        model_frame = tk.Frame(api_frame, bg=self.card_color)
+        model_frame.pack(fill=tk.X, pady=5)
+
+        tk.Label(
+            model_frame,
+            text="选择模型:",
+            bg=self.card_color,
+            fg=self.text_color,
+            font=(global_font, 10)
+        ).pack(side=tk.LEFT, padx=(0, 10))
+
+        self.ai_model_var = tk.StringVar(value=self.ai_model)
+        models = ["deepseek-chat", "豆包大模型", "GPT-4", "Claude"]
+
+        model_combo = ttk.Combobox(
+            model_frame,
+            textvariable=self.ai_model_var,
+            values=models,
+            font=(global_font, 10),
+            width=15,
+            state="readonly"
+        )
+        model_combo.pack(side=tk.LEFT)
+
+        # 保存设置按钮
+        save_btn = tk.Button(
+            api_frame,
+            text="保存设置",
+            command=lambda: self.save_ai_settings(self.api_key_entry.get(), self.ai_model_var.get()),
+            bg=self.ai_color,
+            fg='white',
+            font=(global_font, 10),
+            padx=10,
+            pady=5,
+            relief=tk.FLAT
+        )
+        save_btn.pack(pady=10)
+
+        # 对话历史区域
+        history_frame = tk.LabelFrame(
+            main_frame,
+            text="对话历史",
+            bg=self.card_color,
+            fg=self.text_color,
+            font=(global_font, 10, 'bold'),
+            padx=10,
+            pady=10
+        )
+        history_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        # 添加滚动条
+        scroll_frame = tk.Frame(history_frame, bg=self.card_color)
+        scroll_frame.pack(fill=tk.BOTH, expand=True)
+
+        scrollbar = tk.Scrollbar(scroll_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.ai_history_text = scrolledtext.ScrolledText(
+            scroll_frame,
+            font=(global_font, 10),
+            bg='white',
+            fg=self.text_color,
+            padx=10,
+            pady=10,
+            wrap=tk.WORD,
+            yscrollcommand=scrollbar.set,
+            bd=0
+        )
+        self.ai_history_text.pack(fill=tk.BOTH, expand=True)
+        self.ai_history_text.config(state=tk.DISABLED)
+
+        scrollbar.config(command=self.ai_history_text.yview)
+
+        # 添加对话历史
+        for role, content in self.ai_history:
+            self._add_to_history(role, content)
+
+        # 输入区域
+        input_frame = tk.Frame(main_frame, bg=self.card_color)
+        input_frame.pack(fill=tk.X, pady=5)
+
+        # 输入框
+        self.ai_input = tk.Text(
+            input_frame,
+            height=4,
+            font=(global_font, 10),
+            padx=10,
+            pady=10,
+            bd=1,
+            relief=tk.SOLID
+        )
+        self.ai_input.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+
+        # 特殊功能按钮
+        func_frame = tk.Frame(input_frame, bg=self.card_color)
+        func_frame.pack(side=tk.LEFT, fill=tk.Y)
+
+        # 分析当前图表按钮
+        analyze_btn = tk.Button(
+            func_frame,
+            text="📊 分析图表",
+            command=self.analyze_current_chart,
+            bg=self.highlight_color,
+            fg='white',
+            font=(global_font, 9),
+            width=10,
+            relief=tk.FLAT
+        )
+        analyze_btn.pack(pady=(0, 5))
+
+        # 保存对话按钮
+        save_chat_btn = tk.Button(
+            func_frame,
+            text="💾 保存对话",
+            command=self.export_ai_result,
+            bg=self.secondary_text,
+            fg='white',
+            font=(global_font, 9),
+            width=10,
+            relief=tk.FLAT
+        )
+        save_chat_btn.pack(pady=5)
+
+        # 发送按钮
+        send_btn = tk.Button(
+            func_frame,
+            text="发送",
+            command=self.send_ai_message,
+            bg=self.accent_color,
+            fg='white',
+            font=(global_font, 10),
+            width=10,
+            height=2,
+            relief=tk.FLAT
+        )
+        send_btn.pack(fill=tk.Y, pady=(0, 5))
+
+        # 添加初始欢迎消息
+        if not self.ai_history:
+            welcome_msg = (
+                "你好！我是数据分析助手，我可以帮助你：\n"
+                "1. 解读数据分析结果\n"
+                "2. 提供业务洞察和建议\n"
+                "3. 生成专业的数据报告\n"
+                "4. 解释统计概念和方法\n\n"
+                "点击'分析图表'按钮可以让我分析当前图表数据。"
+            )
+            self.ai_history.append(("assistant", welcome_msg))
+            self._add_to_history("assistant", welcome_msg)
+
+    def _add_to_history(self, role, content):
+        """添加消息到对话历史"""
+        self.ai_history_text.config(state=tk.NORMAL)
+
+        # 添加角色标识
+        role_color = "#1e88e5" if role == "user" else "#d81b60"
+        role_name = "你" if role == "user" else "AI助手"
+        self.ai_history_text.insert(tk.END, f"{role_name}: ", "role_tag")
+        self.ai_history_text.tag_config("role_tag", foreground=role_color, font=(global_font, 10, 'bold'))
+
+        # 添加内容
+        wrapped_content = textwrap.fill(content, width=80)
+        self.ai_history_text.insert(tk.END, wrapped_content + "\n\n")
+
+        self.ai_history_text.config(state=tk.DISABLED)
+        self.ai_history_text.see(tk.END)
+
+    def save_ai_settings(self, api_key, model):
+        """保存AI设置"""
+        self.ai_api_key = api_key
+        self.ai_model = model
+        self._add_to_history("assistant", "API设置已保存，现在可以开始提问了！")
+
+    def analyze_current_chart(self):
+        """分析当前图表"""
+        if not self.word_freq:
+            self._add_to_history("assistant", "请先分析数据后再点击此按钮")
+            return
+
+        # 获取当前图表数据
+        filter_count = self.filter_var.get()
+        top_words = self.word_freq.most_common(filter_count)
+
+        # 构建提示
+        prompt = (
+            "你是一位专业的数据分析师，请根据以下词频数据进行分析：\n\n"
+            f"分析结果（前{filter_count}个高频词）：\n"
+        )
+
+        for word, count in top_words:
+            prompt += f"- {word}: {count}次\n"
+
+        prompt += (
+            "\n请完成以下分析任务：\n"
+            "1. 识别主要主题和关键词\n"
+            "2. 分析数据分布特征\n"
+            "3. 提供业务建议或洞察\n"
+            "4. 指出可能的异常或值得注意的点\n"
+            "5. 用专业但易懂的语言撰写分析报告\n"
+        )
+
+        # 设置输入框内容
+        self.ai_input.delete("1.0", tk.END)
+        self.ai_input.insert(tk.END, prompt)
+
+        # 添加到历史记录
+        self.ai_history.append(("user", "请求分析当前图表数据"))
+        self._add_to_history("user", "请求分析当前图表数据")
+
+        # 自动发送消息
+        self.send_ai_message()
+
+    def export_ai_result(self):
+        """导出AI对话结果"""
+        if not self.ai_history:
+            messagebox.showwarning("警告", "没有可导出的对话内容")
+            return
+
+        # 构建对话内容
+        content = f"AI对话历史记录 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        for role, msg in self.ai_history:
+            content += f"{'你' if role == 'user' else 'AI助手'}: {msg}\n\n"
+
+        # 保存文件
+        default_filename = f"AI分析结果_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        file_path = filedialog.asksaveasfilename(
+            title="导出对话结果",
+            defaultextension=".txt",
+            filetypes=[("文本文件", "*.txt")],
+            initialfile=default_filename
+        )
+
+        if file_path:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+            self._add_to_history("assistant", f"对话结果已导出至: {os.path.basename(file_path)}")
+
+    def send_ai_message(self):
+        """发送AI消息"""
+        message = self.ai_input.get("1.0", tk.END).strip()
+        if not message:
+            messagebox.showwarning("警告", "请输入消息内容")
+            return
+
+        if not self.ai_api_key:
+            self._add_to_history("assistant", "请先设置API密钥")
+            return
+
+        # 添加到历史记录
+        self.ai_history.append(("user", message))
+        self._add_to_history("user", message)
+
+        # 清空输入框
+        self.ai_input.delete("1.0", tk.END)
+
+        # 在独立线程中处理API请求
+        threading.Thread(target=self.call_ai_api, args=(message,)).start()
+
+    def call_ai_api(self, message):
+        """调用AI API"""
+        # 显示正在生成
+        self.ai_history_text.config(state=tk.NORMAL)
+        self.ai_history_text.insert(tk.END, "AI助手: 正在思考...\n\n", "thinking")
+        self.ai_history_text.tag_config("thinking", foreground="#6c757d", font=(global_font, 10))
+        self.ai_history_text.config(state=tk.DISABLED)
+        self.ai_history_text.see(tk.END)
+
+        try:
+            # 模拟API调用 - 实际应用中替换为真实API调用
+            time.sleep(1.5)  # 模拟网络延迟
+
+            # 这里是模拟的API响应 - 实际应用中根据API文档实现
+            if "分析" in message or "图表" in message:
+                # 生成专业的数据分析报告
+                filter_count = self.filter_var.get()
+                top_words = self.word_freq.most_common(filter_count) if self.word_freq else []
+
+                # 构建分析报告
+                response = (
+                    "## 数据分析报告\n\n"
+                    "### 数据概览\n"
+                    f"- 分析词语数量: {filter_count}\n"
+                    f"- 总词语数量: {sum(count for _, count in top_words) if top_words else 'N/A'}\n"
+                    f"- 唯一词语数量: {len(top_words)}\n\n"
+
+                    "### 主要发现\n"
+                    "1. **高频词分析**:\n"
+                )
+
+                # 添加高频词分析
+                for i, (word, count) in enumerate(top_words[:5]):
+                    response += f"   - 排名第{i + 1}的词语是 '{word}', 出现 {count} 次\n"
+
+                response += (
+                    "\n2. **主题识别**: 基于高频词，数据主要涉及以下主题:\n"
+                    "   - 安全相关术语（如'安全'、'防护'）\n"
+                    "   - 设备设施（如'配电箱'、'脚手架'）\n"
+                    "   - 应急措施（如'灭火器'、'应急照明灯'）\n\n"
+
+                    "3. **分布特征**:\n"
+                    "   - 数据分布呈现长尾特征，少数词语占据大部分出现次数\n"
+                    "   - 安全相关术语占据主导地位，表明文档主题聚焦于安全领域\n\n"
+
+                    "### 建议与洞察\n"
+                    "1. 安全主题突出，建议加强相关安全措施的文档记录\n"
+                    "2. 对于出现频率较低的术语，检查是否遗漏重要概念\n"
+                    "3. 考虑对长尾词进行归类分析，提取二级主题\n\n"
+
+                    "### 注意事项\n"
+                    "- 数据来源可能影响分析结果，需确认数据完整性\n"
+                    "- 部分低频词可能具有特殊重要性，需人工复核\n"
+                )
+            else:
+                # 通用响应
+                response = (
+                    "我已收到你的查询，并进行了深入分析。作为数据分析专家，我可以提供以下帮助：\n\n"
+                    "1. **数据解读**：解释图表中的关键发现和趋势\n"
+                    "2. **洞察提取**：从数据中提取有价值的业务洞察\n"
+                    "3. **建议提供**：基于分析结果提出可操作建议\n"
+                    "4. **报告生成**：创建专业的数据分析报告\n\n"
+                    "请提供更多具体信息或数据，以便我为你提供更精准的分析。"
+                )
+
+            # 添加到历史记录
+            self.ai_history.append(("assistant", response))
+            self.ai_history_text.config(state=tk.NORMAL)
+            self.ai_history_text.delete("end-3l", "end")  # 删除"正在思考..."
+            self._add_to_history("assistant", response)
+
+        except Exception as e:
+            error_msg = f"API调用失败: {str(e)}"
+            self.ai_history.append(("assistant", error_msg))
+            self.ai_history_text.config(state=tk.NORMAL)
+            self.ai_history_text.delete("end-3l", "end")  # 删除"正在思考..."
+            self._add_to_history("assistant", error_msg)
+
+    def update_chart_type(self, event=None):
+        """更新图表类型并重新绘制"""
+        if self.word_freq is not None:
+            self.current_chart_type = self.chart_type.get()
+            self.show_chart()
+
+    def on_filter_change(self, value):
+        """过滤条件变化时更新图表"""
+        if self.word_freq is not None:
+            self.root.after(300, self.show_chart)  # 添加延迟防止频繁刷新
+
+    def browse_file(self):
+        """浏览并选择文件"""
+        # 根据选择的文件类型设置文件过滤器
+        file_types = []
+        file_type = self.file_type_var.get()
+
+        if file_type == "all" or file_type == "excel":
+            file_types.append(("Excel文件", "*.xlsx *.xls"))
+        if file_type == "all" or file_type == "txt":
+            file_types.append(("文本文件", "*.txt"))
+        if file_type == "all" or file_type == "docx":
+            file_types.append(("Word文档", "*.docx"))
+
+        file_path = filedialog.askopenfilename(
+            title="选择文件",
+            filetypes=file_types
+        )
+
+        if file_path:
+            self.file_path = file_path
+            short_path = os.path.basename(file_path)
+            self.file_path_var.set(f"已选择: {short_path}")
+            self.status_var.set(f"正在加载文件: {short_path}")
+            self.root.after(100, self.load_file)
+
+    def load_file(self):
+        """加载文件内容"""
+        try:
+            if not self.file_path:
+                return
+
+            ext = os.path.splitext(self.file_path)[1].lower()
+
+            if ext in ['.xlsx', '.xls']:
+                # 加载Excel文件
+                try:
+                    self.df = pd.read_excel(self.file_path)
+                except Exception as e:
+                    # 尝试使用不同的引擎加载
+                    if 'xlsx' in self.file_path:
+                        self.df = pd.read_excel(self.file_path, engine='openpyxl')
+                    else:
+                        self.df = pd.read_excel(self.file_path)
+
+                self.column_combo['values'] = list(self.df.columns)
+                self.column_combo['state'] = "readonly"
+                self.column_combo.current(0)
+                self.selected_column = self.df.columns[0]
+
+                # 显示数据预览
+                self.show_data_preview()
+                self.status_var.set(f"Excel文件加载完成，共 {len(self.df)} 行数据")
+
+            elif ext == '.txt':
+                # 加载文本文件
+                with open(self.file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+
+                # 创建单列DataFrame
+                self.df = pd.DataFrame({f"文本内容": [content]})
+                self.column_combo['values'] = list(self.df.columns)
+                self.column_combo['state'] = "readonly"
+                self.column_combo.current(0)
+                self.selected_column = self.df.columns[0]
+
+                # 显示数据预览
+                self.preview_text.delete(1.0, tk.END)
+                preview = content[:500] + ('' if len(content) <= 500 else '...')
+                self.preview_text.insert(tk.END, preview)
+                self.status_var.set(f"文本文件加载完成，共 {len(content)} 个字符")
+
+            elif ext == '.docx':
+                # 加载Word文档
+                try:
+                    doc = docx.Document(self.file_path)
+                    content = "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
+
+                    # 创建单列DataFrame
+                    self.df = pd.DataFrame({f"文档内容": [content]})
+                    self.column_combo['values'] = list(self.df.columns)
+                    self.column_combo['state'] = "readonly"
+                    self.column_combo.current(0)
+                    self.selected_column = self.df.columns[0]
+
+                    # 显示数据预览
+                    self.preview_text.delete(1.0, tk.END)
+                    preview = content[:500] + ('' if len(content) <= 500 else '...')
+                    self.preview_text.insert(tk.END, preview)
+                    self.status_var.set(f"Word文档加载完成，共 {len(content)} 个字符")
+
+                except Exception as e:
+                    messagebox.showerror("错误", f"读取Word文档时出错: {str(e)}")
+                    self.status_var.set("加载文件失败")
+
+            else:
+                messagebox.showerror("错误", "不支持的文件格式")
+                self.status_var.set("加载文件失败")
+
+        except Exception as e:
+            messagebox.showerror("错误", f"加载文件时出错: {str(e)}")
+            self.status_var.set("加载文件失败")
+
+    def show_data_preview(self):
+        """显示数据预览"""
+        if self.df is not None:
+            self.preview_text.delete(1.0, tk.END)
+            preview = self.df.head().to_string(index=False)
+            self.preview_text.insert(tk.END, preview)
+
+    def on_column_selected(self, event=None):
+        """列选择事件处理"""
+        self.selected_column = self.column_combo.get()
+        self.status_var.set(f"已选择列: {self.selected_column}")
+
+    def analyze_data(self, event=None):
+        """分析数据"""
+        if self.selected_column is None or self.df is None:
+            messagebox.showwarning("警告", "请先选择要分析的文件和列")
+            return
+
+        try:
+            self.status_var.set("正在分析数据...")
+            self.root.update()
+
+            # 获取选定列的数据
+            column_data = self.df[self.selected_column].dropna()
+
+            # 合并所有文本
+            all_text = ' '.join(column_data.astype(str))
+
+            # 去除标点符号和特殊字符
+            cleaned_text = re.sub(r'[^\w\s]', '', all_text)
+
+            # 分割成词语
+            words = cleaned_text.split()
+
+            # 更新停用词
+            custom_stopwords = self.stopwords_entry.get().split(',')
+            self.stopwords.update([word.strip() for word in custom_stopwords if word.strip()])
+
+            # 过滤停用词
+            filtered_words = [word for word in words if word not in self.stopwords]
+
+            # 统计词频
+            self.word_freq = Counter(filtered_words)
+
+            # 更新状态
+            total_words = len(filtered_words)
+            unique_words = len(self.word_freq)
+            self.status_var.set(f"分析完成: 共 {total_words} 个词语，{unique_words} 个不同词语")
+
+            # 显示图表
+            self.current_chart_type = self.chart_type.get()
+            self.show_chart()
+
+        except Exception as e:
+            messagebox.showerror("错误", f"分析数据时出错: {str(e)}")
+            self.status_var.set("分析失败")
+
+    def create_pie_chart(self, ax, top_words, filter_count):
+        """创建饼图并解决小标签重叠问题"""
+        labels, sizes = zip(*top_words)
+
+        # 计算总词频
+        total = sum(sizes)
+
+        # 创建饼图
+        wedges, texts = ax.pie(
+            sizes,
+            labels=None,
+            startangle=90,
+            wedgeprops={'linewidth': 1, 'edgecolor': 'white'},
+            pctdistance=0.85
+        )
+
+        # 为每个扇区添加标签
+        bbox_props = dict(boxstyle="round,pad=0.3", fc="w", ec="k", lw=0.72, alpha=0.8)
+        kw = dict(arrowprops=dict(arrowstyle="-", color='gray', alpha=0.7),
+                  bbox=bbox_props, zorder=0, va="center")
+
+        for i, p in enumerate(wedges):
+            ang = (p.theta2 - p.theta1) / 2. + p.theta1
+            y = np.sin(np.deg2rad(ang))
+            x = np.cos(np.deg2rad(ang))
+
+            # 计算百分比
+            percentage = sizes[i] / total * 100
+
+            # 确定标签位置
+            if percentage >= 5:  # 大扇区直接在内部标注
+                ax.text(x * 0.7, y * 0.7, f"{labels[i]}\n{percentage:.1f}%",
+                        ha="center", va="center", fontsize=9)
+            else:  # 小扇区使用引线标注
+                horizontalalignment = {-1: "right", 1: "left"}[int(np.sign(x))]
+                connectionstyle = f"angle,angleA=0,angleB={ang}"
+                kw["arrowprops"].update({"connectionstyle": connectionstyle})
+                ax.annotate(f"{labels[i]}: {percentage:.1f}%",
+                            xy=(x, y), xytext=(1.35 * np.sign(x), 1.4 * y),
+                            horizontalalignment=horizontalalignment,
+                            fontsize=8, **kw)
+
+        # 自适应标题位置
+        ax.set_title(f'词语频率分布 (前{filter_count}个)', fontsize=14, pad=20)
+
+    def create_bar_chart(self, ax, top_words, filter_count):
+        """创建柱状图并使用渐变绿色"""
+        labels, values = zip(*top_words)
+
+        # 创建从墨绿色到鹅黄绿的渐变色
+        color1 = np.array([0, 77, 64]) / 255.0  # 墨绿色 #004d40
+        color2 = np.array([230, 238, 156]) / 255.0  # 鹅黄绿 #e6ee9c
+        colors = [color1 + (color2 - color1) * i / len(labels) for i in range(len(labels))]
+        colors = [mcolors.to_hex(color) for color in colors]
+
+        # 创建柱状图
+        bars = ax.bar(labels, values, color=colors)
+        ax.set_xlabel('词语', fontsize=12)
+        ax.set_ylabel('频率', fontsize=12)
+
+        # 自适应标题位置
+        ax.set_title(f'词语频率统计 (前{filter_count}个)', fontsize=14, pad=20)
+
+        # 设置X轴标签
+        ax.set_xticks(np.arange(len(labels)))
+        ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=9)
+
+        # 自动调整标签位置避免重叠
+        plt.tight_layout()
+
+        # 添加数值标签
+        for bar in bars:
+            height = bar.get_height()
+            ax.annotate(
+                f'{height}',
+                xy=(bar.get_x() + bar.get_width() / 2, height),
+                xytext=(0, 3),  # 3点垂直偏移
+                textcoords="offset points",
+                ha='center',
+                va='bottom',
+                fontsize=9
+            )
+
+    def create_wordcloud(self, ax, top_words, filter_count):
+        """创建词云图"""
+        # 创建词云对象
+        wordcloud = WordCloud(
+            font_path='simhei.ttf' if platform.system() == 'Windows' else None,
+            width=1200,
+            height=800,
+            background_color='white',
+            max_words=filter_count,
+            colormap='Greens',  # 使用绿色系
+            collocations=False,  # 不包含二元组
+            prefer_horizontal=0.9  # 优先水平排列
+        ).generate_from_frequencies(dict(top_words))
+
+        # 显示词云
+        ax.imshow(wordcloud, interpolation='bilinear')
+        ax.axis('off')
+
+        # 自适应标题位置
+        ax.set_title(f'词语云图 (前{filter_count}个)', fontsize=14, pad=20)
+
+    def show_chart(self):
+        """显示图表"""
+        if self.word_freq is None:
+            messagebox.showwarning("警告", "请先分析数据")
+            return
+
+        try:
+            # 清除当前图表
+            if hasattr(self, 'chart_placeholder'):
+                self.chart_placeholder.destroy()
+                del self.chart_placeholder
+
+            # 清除现有图表组件
+            if hasattr(self, 'toolbar') and self.toolbar:
+                self.toolbar.destroy()
+            if hasattr(self, 'chart_canvas') and self.chart_canvas:
+                self.chart_canvas.get_tk_widget().destroy()
+
+            # 获取过滤后的高频词
+            filter_count = self.filter_var.get()
+            top_words = self.word_freq.most_common(filter_count)
+
+            if not top_words:
+                messagebox.showwarning("警告", "没有足够的数据生成图表")
+                return
+
+            # 创建图表
+            fig = Figure(figsize=(10, 8), dpi=100)
+            ax = fig.add_subplot(111)
+
+            # 根据当前图表类型创建图表
+            if self.current_chart_type == "饼状图":
+                self.create_pie_chart(ax, top_words, filter_count)
+            elif self.current_chart_type == "柱状图":
+                self.create_bar_chart(ax, top_words, filter_count)
+            elif self.current_chart_type == "词云图":
+                self.create_wordcloud(ax, top_words, filter_count)
+
+            # 设置全局字体
+            for text in ax.get_xticklabels() + ax.get_yticklabels():
+                text.set_fontproperties(fm.FontProperties(family=global_font))
+
+            ax.title.set_fontproperties(fm.FontProperties(family=global_font, size=14))
+            ax.xaxis.label.set_fontproperties(fm.FontProperties(family=global_font, size=12))
+            ax.yaxis.label.set_fontproperties(fm.FontProperties(family=global_font, size=12))
+
+            # 在Tkinter窗口中显示图表
+            self.chart_canvas = FigureCanvasTkAgg(fig, master=self.chart_container)
+            self.chart_canvas.draw()
+            self.chart_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            # 添加导航工具栏
+            self.toolbar = NavigationToolbar2Tk(self.chart_canvas, self.chart_container)
+            self.toolbar.update()
+            self.chart_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        except Exception as e:
+            messagebox.showerror("错误", f"生成图表时出错: {str(e)}")
+
+    def reset_view(self):
+        """重置视图"""
+        if self.word_freq is not None:
+            self.show_chart()
+
+    def save_chart(self):
+        """保存当前图表"""
+        if not hasattr(self, 'chart_canvas') or not hasattr(self.chart_canvas, 'figure'):
+            messagebox.showwarning("警告", "没有可保存的图表")
+            return
+
+        try:
+            default_filename = f"词语分析图表_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            file_path = filedialog.asksaveasfilename(
+                title="保存图表",
+                defaultextension=".png",
+                filetypes=[("PNG文件", "*.png"), ("JPG文件", "*.jpg"), ("SVG文件", "*.svg")],
+                initialfile=default_filename
+            )
+
+            if file_path:
+                self.chart_canvas.figure.savefig(file_path, dpi=300, bbox_inches='tight')
+                messagebox.showinfo("成功", f"图表已保存至: {file_path}")
+                self.status_var.set(f"图表已保存: {os.path.basename(file_path)}")
+        except Exception as e:
+            messagebox.showerror("错误", f"保存图表时出错: {str(e)}")
+
+    def export_wordcloud(self):
+        """导出词云数据为TXT文件"""
+        if self.word_freq is None:
+            messagebox.showwarning("警告", "请先分析数据")
+            return
+
+        try:
+            # 获取过滤后的高频词
+            filter_count = self.filter_var.get()
+            top_words = self.word_freq.most_common(filter_count)
+
+            if not top_words:
+                messagebox.showwarning("警告", "没有足够的数据导出")
+                return
+
+            # 创建文本内容
+            content = "词语\t频率\n" + "\n".join([f"{word}\t{count}" for word, count in top_words])
+
+            # 保存文件
+            default_filename = f"词云数据_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            file_path = filedialog.asksaveasfilename(
+                title="导出词云数据",
+                defaultextension=".txt",
+                filetypes=[("文本文件", "*.txt")],
+                initialfile=default_filename
+            )
+
+            if file_path:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+
+                messagebox.showinfo("成功", f"词云数据已导出至: {file_path}")
+                self.status_var.set(f"词云数据已导出: {os.path.basename(file_path)}")
+        except Exception as e:
+            messagebox.showerror("错误", f"导出词云数据时出错: {str(e)}")
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = TextAnalyzerApp(root)
+    root.mainloop()
